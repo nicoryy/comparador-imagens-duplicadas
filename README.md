@@ -39,6 +39,8 @@ Aplicativo desktop em **Electron + React** para auditoria manual de grupos de im
 - **Pré-povoamento** dos status a partir de marcações já existentes na planilha (`MANTER`/`DUPLICADA`/`x`/`sim`/etc.).
 - **Auto-save com debounce de 800 ms** direto no arquivo, preservando macros (`.xlsm`), fórmulas e demais colunas.
 - **Indicador de gravação** (saving / saved / error / dirty) sempre visível no canto da tela.
+- **Fechamento protegido** — tentar fechar a janela (botão X, Alt+F4, `Cmd+Q`) com alterações pendentes ou save em andamento abre um diálogo nativo com três opções: "Salvar e fechar", "Fechar sem salvar", "Cancelar". Evita corromper a planilha por fechamento acidental.
+- **Atalhos configuráveis** — painel dedicado para reatribuir teclas de cada ação, com detecção de conflitos e persistência em `localStorage`.
 - **Sidebar com progresso global** — % de grupos concluídos e % de imagens classificadas em toda a auditoria.
 - **Modal de zoom** e **modo de comparação lado a lado** entre duas imagens do mesmo grupo.
 - **Atalho "marcar 1ª como manter, demais como duplicadas"** — automatiza o caso mais comum.
@@ -112,18 +114,23 @@ Acionável por botão flutuante (canto inferior direito). Permite ajustar em tem
 
 ## Atalhos de teclado
 
+Todos os atalhos abaixo são **configuráveis** pelo painel de preferências → seção **Atalhos** → "Configurar atalhos…". Defaults:
+
 | Tecla | Ação |
 |---|---|
 | `M` | Marcar imagem ativa como **manter** (toggle) |
 | `D` | Marcar imagem ativa como **duplicada** (toggle) |
-| `1`–`9`, `0` | Selecionar imagem por número |
-| `←` `→` `↑` `↓` | Navegar entre imagens do grupo |
+| `1`–`9`, `0` | Selecionar card por número *(reservado, não configurável)* |
+| `←` `→` | Navegar entre **imagens internas** do card focado (galerias com múltiplas imagens, ex.: SINAPI) |
+| `↑` `↓` | Mover foco entre cards na mesma coluna do grid |
 | `Z` | Abrir zoom da imagem ativa |
 | `C` | Iniciar comparação lado a lado |
 | `N` / `P` | Próximo / anterior grupo |
 | `Enter` | Concluir grupo (se todas classificadas) |
 | `Ctrl+S` / `⌘S` | Salvar agora |
 | `Esc` | Fechar modal |
+
+O painel de configuração detecta conflitos (mesma tecla em duas ações) e permite restaurar padrões por ação ou de tudo. Persistido em `localStorage.comparador.hotkeys`.
 
 ---
 
