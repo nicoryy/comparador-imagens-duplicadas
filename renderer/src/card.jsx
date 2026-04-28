@@ -1,6 +1,6 @@
 // Cartão de imagem no grid de comparação (imagem real, dados reais).
 
-const Card = React.memo(function Card({ img, idx, status, focused, comparePick, onSetStatus, onFocus, onZoom, onMenu, menuOpen, onMenuAction, mapping }) {
+const Card = React.memo(function Card({ img, idx, status, focused, comparePick, onSetStatus, onFocus, onZoom, onMenu, menuOpen, onMenuAction, mapping, onRegisterImageNav }) {
   const isKeep = status === 'keep';
   const isDup = status === 'dup';
   const chipRef = React.useRef(null);
@@ -25,6 +25,21 @@ const Card = React.memo(function Card({ img, idx, status, focused, comparePick, 
   const { src, state: srcState, candidates, activeIdx, setActiveIdx } = useResolvedImageSrc(img);
   React.useEffect(() => { setImgLoaded(false); }, [src]);
   const imgState = srcState === 'loading' ? 'loading' : (srcState === 'error' ? 'error' : (imgLoaded ? 'loaded' : 'loading'));
+
+  // Expõe ao App um callback de navegação entre as imagens internas.
+  // Usa ref interna pra que o callback continue válido sem re-registrar a cada render.
+  const candidatesLenRef = React.useRef(candidates.length);
+  React.useEffect(() => { candidatesLenRef.current = candidates.length; }, [candidates.length]);
+  React.useEffect(() => {
+    if (!onRegisterImageNav) return;
+    const cycle = (delta) => {
+      const len = candidatesLenRef.current;
+      if (len <= 1) return;
+      setActiveIdx(i => Math.max(0, Math.min(len - 1, i + delta)));
+    };
+    onRegisterImageNav(idx, cycle);
+    return () => onRegisterImageNav(idx, null);
+  }, [idx, onRegisterImageNav, setActiveIdx]);
 
   return (
     <div className={cardClass} onClick={() => onFocus(idx)}>

@@ -16,6 +16,8 @@ const App = () => {
   const [loadError, setLoadError] = useState(null);
 
   const [values, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const { config: hotkeyConfig, setActionKeys: setHotkey, resetAction: resetHotkey, resetAll: resetHotkeysAll } = useHotkeyConfig();
+  const [hotkeysModalOpen, setHotkeysModalOpen] = useState(false);
 
   useEffect(() => {
     if (values.hue != null) {
@@ -143,11 +145,13 @@ const App = () => {
   }, [groupIdx, goNext, totalGroups]);
 
   // ─── Salvamento ────────────────────────────────────────────────────────────
+  // Retorna `true` em sucesso (ou se não havia nada a gravar), `false` em erro.
+  // O retorno é usado no fluxo "Salvar e fechar" para decidir se a janela pode fechar.
   const saveNow = useCallback(async () => {
-    if (!setupConfig) return;
-    if (savingRef.current) return;
+    if (!setupConfig) return true;
+    if (savingRef.current) return true;
     const dirty = dirtyRef.current;
-    if (!dirty || Object.keys(dirty).length === 0) return;
+    if (!dirty || Object.keys(dirty).length === 0) return true;
     savingRef.current = true;
     setSaving(true); setSaveState('saving'); setSaveError(null);
     try {
@@ -167,14 +171,30 @@ const App = () => {
       });
       setSaveState('saved');
       setTimeout(() => setSaveState(s => s === 'saved' ? 'idle' : s), 1500);
+      return true;
     } catch (err) {
       setSaveState('error');
       setSaveError(err.message || String(err));
+      return false;
     } finally {
       savingRef.current = false;
       setSaving(false);
     }
   }, [setupConfig]);
+
+  // Reporta estado de gravação ao processo main (usado pra bloquear fechamento).
+  useEffect(() => {
+    window.electronAPI?.setRenderState?.({ dirty, saving });
+  }, [dirty, saving]);
+
+  // Quando o main pede "Salvar e fechar", roda saveNow e confirma o resultado.
+  useEffect(() => {
+    if (!window.electronAPI?.onSaveBeforeClose) return;
+    return window.electronAPI.onSaveBeforeClose(async () => {
+      const ok = await saveNow();
+      window.electronAPI.confirmCloseAfterSave(ok);
+    });
+  }, [saveNow]);
 
   // Auto-save com debounce
   useEffect(() => {
@@ -204,37 +224,66 @@ const App = () => {
     setFocusIdx(idx);
   }, [compareMode]);
 
-  // ─── Atalhos de teclado ────────────────────────────────────────────────────
+  // ─── Atalhos de teclado (resolver config-driven) ───────────────────────────
+  // Cards expõem um callback de navegação entre imagens internas via ref-map.
+  const cardImageNavRef = useRef({});
+  const registerCardImageNav = useCallback((cardIdx, fn) => {
+    if (fn) cardImageNavRef.current[cardIdx] = fn;
+    else delete cardImageNavRef.current[cardIdx];
+  }, []);
+
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.matches('input,textarea,select')) return;
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveNow(); return; }
+      const action = resolveAction(e, hotkeyConfig);
+
+      // Modais têm prioridade — capturam fechar e navegação local.
       if (zoomModal) {
-        if (e.key === 'Escape') setZoomModal(null);
-        if (e.key === 'ArrowLeft')  setZoomModal(z => z && z.idx > 0 ? { idx: z.idx - 1 } : z);
-        if (e.key === 'ArrowRight') setZoomModal(z => z && z.idx < groupSize - 1 ? { idx: z.idx + 1 } : z);
+        if (action === 'close-modal') { e.preventDefault(); setZoomModal(null); return; }
+        if (action === 'nav-image-prev') { e.preventDefault(); setZoomModal(z => z && z.idx > 0 ? { idx: z.idx - 1 } : z); return; }
+        if (action === 'nav-image-next') { e.preventDefault(); setZoomModal(z => z && z.idx < groupSize - 1 ? { idx: z.idx + 1 } : z); return; }
         return;
       }
-      if (compareMode && e.key === 'Escape') { setCompareMode(null); return; }
+      if (compareMode && action === 'close-modal') { e.preventDefault(); setCompareMode(null); return; }
 
-      const k = e.key.toLowerCase();
-      if (k === 'm') { e.preventDefault(); setStatus(focusIdx, status[focusIdx] === 'keep' ? null : 'keep'); }
-      else if (k === 'd') { e.preventDefault(); setStatus(focusIdx, status[focusIdx] === 'dup' ? null : 'dup'); }
-      else if (k === 'n') { e.preventDefault(); goNext(); }
-      else if (k === 'p') { e.preventDefault(); goPrev(); }
-      else if (k === 'z') { e.preventDefault(); setZoomModal({ idx: focusIdx }); }
-      else if (k === 'c') { e.preventDefault(); setCompareMode({ firstIdx: focusIdx }); }
-      else if (e.key === 'Enter' && allClassified && !completed) { e.preventDefault(); completeGroup(); }
-      else if (e.key === 'ArrowRight') setFocusIdx(i => Math.min(groupSize - 1, i + 1));
-      else if (e.key === 'ArrowLeft')  setFocusIdx(i => Math.max(0, i - 1));
-      else if (e.key === 'ArrowDown')  setFocusIdx(i => Math.min(groupSize - 1, i + (values.cols || 6)));
-      else if (e.key === 'ArrowUp')    setFocusIdx(i => Math.max(0, i - (values.cols || 6)));
-      else if (/^[1-9]$/.test(e.key)) setFocusIdx(Math.min(groupSize - 1, parseInt(e.key, 10) - 1));
-      else if (e.key === '0' && groupSize >= 10) setFocusIdx(9);
+      // Seleção de card por número (1–9, 0) — fixo, não configurável.
+      if (/^[1-9]$/.test(e.key)) { e.preventDefault(); setFocusIdx(Math.min(groupSize - 1, parseInt(e.key, 10) - 1)); return; }
+      if (e.key === '0' && groupSize >= 10) { e.preventDefault(); setFocusIdx(9); return; }
+
+      if (!action) return;
+      switch (action) {
+        case 'mark-keep':      e.preventDefault(); setStatus(focusIdx, status[focusIdx] === 'keep' ? null : 'keep'); break;
+        case 'mark-dup':       e.preventDefault(); setStatus(focusIdx, status[focusIdx] === 'dup' ? null : 'dup'); break;
+        case 'next-group':     e.preventDefault(); goNext(); break;
+        case 'prev-group':     e.preventDefault(); goPrev(); break;
+        case 'zoom':           e.preventDefault(); setZoomModal({ idx: focusIdx }); break;
+        case 'compare':        e.preventDefault(); setCompareMode({ firstIdx: focusIdx }); break;
+        case 'save-now':       e.preventDefault(); saveNow(); break;
+        case 'complete-group':
+          if (allClassified && !completed) { e.preventDefault(); completeGroup(); }
+          break;
+        case 'nav-image-prev':
+          e.preventDefault();
+          cardImageNavRef.current[focusIdx]?.(-1);
+          break;
+        case 'nav-image-next':
+          e.preventDefault();
+          cardImageNavRef.current[focusIdx]?.(+1);
+          break;
+        case 'nav-card-up':
+          e.preventDefault();
+          setFocusIdx(i => Math.max(0, i - (values.cols || 6)));
+          break;
+        case 'nav-card-down':
+          e.preventDefault();
+          setFocusIdx(i => Math.min(groupSize - 1, i + (values.cols || 6)));
+          break;
+        default: /* no-op */
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [focusIdx, status, setStatus, goNext, goPrev, zoomModal, compareMode, groupSize, values.cols, allClassified, completed, completeGroup, saveNow]);
+  }, [focusIdx, status, setStatus, goNext, goPrev, zoomModal, compareMode, groupSize, values.cols, allClassified, completed, completeGroup, saveNow, hotkeyConfig]);
 
   // Fecha menu de card ao clicar fora
   const onMenu = (idx) => setMenuOpenIdx(prev => prev === idx ? null : idx);
@@ -370,6 +419,7 @@ const App = () => {
                 menuOpen={menuOpenIdx === idx}
                 onMenuAction={handleMenuAction}
                 mapping={setupConfig.mapping}
+                onRegisterImageNav={registerCardImageNav}
               />
             ))}
           </div>
@@ -402,6 +452,16 @@ const App = () => {
 
       <SaveIndicator state={saveState} dirty={dirty} error={saveError} />
 
+      {hotkeysModalOpen && (
+        <HotkeysModal
+          config={hotkeyConfig}
+          onSetKeys={setHotkey}
+          onResetAction={resetHotkey}
+          onResetAll={resetHotkeysAll}
+          onClose={() => setHotkeysModalOpen(false)}
+        />
+      )}
+
       <TweaksPanel title="Preferências">
         <TweakSection label="Aparência" />
         <TweakSlider label="Tom de acento" value={values.hue} min={0} max={360} step={5} unit="°"
@@ -416,6 +476,9 @@ const App = () => {
         <TweakToggle label="Salvar automaticamente" value={values.autoSave}
           onChange={(v) => setTweak('autoSave', v)} />
         <TweakButton label="Salvar agora" onClick={saveNow} />
+
+        <TweakSection label="Atalhos" />
+        <TweakButton label="Configurar atalhos…" onClick={() => setHotkeysModalOpen(true)} />
 
         <TweakSection label="Grupo atual" />
         <TweakButton label="Manter 1ª, duplicar demais" onClick={() => markAllOthersDup(0)} />
