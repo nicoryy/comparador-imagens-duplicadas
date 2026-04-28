@@ -1,0 +1,50 @@
+{
+  "name": "comparador-imagens-duplicadas",
+  "version": "1.0.0",
+  "description": "Comparador de Imagens Duplicadas — auditoria manual de prints com leitura/escrita massiva em planilhas xlsx/xlsm",
+  "main": "electron/main.js",
+  "author": "Nicory",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "vendor": "node scripts/copy-vendor.js",
+    "postinstall": "node scripts/copy-vendor.js",
+    "start": "npm run vendor && electron .",
+    "dev": "npm run vendor && electron . --enable-logging",
+    "build": "npm run vendor && electron-builder",
+    "build:win": "npm run vendor && electron-builder --win",
+    "build:mac": "npm run vendor && electron-builder --mac",
+    "build:linux": "npm run vendor && electron-builder --linux"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0"
+  },
+  "devDependencies": {
+    "@babel/standalone": "^7.26.5",
+    "electron": "^31.7.6",
+    "electron-builder": "^24.13.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "build": {
+    "appId": "br.com.nicory.comparador-duplicadas",
+    "productName": "Comparador de Duplicadas",
+    "files": [
+      "electron/**/*",
+      "renderer/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "mac": {
+      "target": ["dmg"]
+    },
+    "linux": {
+      "target": ["AppImage"]
+    }
+  }
+}

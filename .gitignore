@@ -1,0 +1,22 @@
+node_modules/
+dist/
+out/
+.DS_Store
+*.log
+.env
+.env.local
+_design-reference/
+.cache/
+
+# Gerado pelo postinstall (scripts/copy-vendor.js)
+renderer/vendor/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+ehthumbs.db
+desktop.ini
