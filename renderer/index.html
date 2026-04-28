@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self' 'unsafe-inline' app-image: data:;
+                 img-src 'self' app-image: data: blob: http: https:;
+                 font-src 'self' https://fonts.gstatic.com data:;
+                 style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+                 script-src 'self' 'unsafe-inline' 'unsafe-eval';
+                 connect-src 'self' app-image: data: http: https:;" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Comparador de Imagens Duplicadas</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="setup.css" />
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="vendor/react.production.min.js"></script>
+  <script src="vendor/react-dom.production.min.js"></script>
+  <script src="vendor/babel.min.js"></script>
+
+  <script src="src/data.js"></script>
+  <script type="text/babel" src="src/tweaks-panel.jsx"></script>
+  <script type="text/babel" src="src/card.jsx"></script>
+  <script type="text/babel" src="src/modals.jsx"></script>
+  <script type="text/babel" src="src/chrome.jsx"></script>
+  <script type="text/babel" src="src/setup.jsx"></script>
+  <script type="text/babel" src="src/app.jsx"></script>
+</body>
+</html>
