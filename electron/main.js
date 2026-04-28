@@ -15,6 +15,14 @@ let xlsxWorker = null;
 const pendingJobs = new Map();
 let jobSeq = 0;
 
+// Estado de gravação reportado pelo renderer. Usado pra bloquear o fechamento
+// da janela enquanto há alterações pendentes ou um save em andamento.
+let renderState = { dirty: false, saving: false };
+// Quando o usuário pediu "Salvar e fechar", aguardamos a confirmação do
+// renderer (saveNow concluído) antes de chamar close() de novo.
+let forceClosing = false;
+let pendingCloseAfterSave = false;
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'app-image',
@@ -86,6 +94,48 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
   if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
+
+  // Intercepta o fechamento (botão X, Alt+F4, app.quit) enquanto houver
+  // alterações não salvas ou um save em curso.
+  mainWindow.on('close', (e) => {
+    if (forceClosing) return;
+    if (!renderState.dirty && !renderState.saving) return;
+
+    e.preventDefault();
+
+    // Já pediu "Salvar e fechar" e está aguardando a resposta — não reabra o
+    // diálogo se o usuário tentar fechar de novo no meio do processo.
+    if (pendingCloseAfterSave) return;
+
+    const message = renderState.saving
+      ? 'A planilha ainda está sendo salva.'
+      : 'Há alterações que ainda não foram gravadas na planilha.';
+    const detail = renderState.saving
+      ? 'Fechar agora pode corromper o arquivo. Aguarde a gravação concluir ou feche mesmo assim por sua conta e risco.'
+      : 'Recomenda-se salvar antes de fechar para não perder as marcações.';
+
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Salvar e fechar', 'Fechar sem salvar', 'Cancelar'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: 'Alterações pendentes',
+      message,
+      detail,
+    });
+
+    if (choice === 0) {
+      // Pede ao renderer pra salvar agora; ele responde via IPC e o main
+      // reemite close() com forceClosing=true.
+      pendingCloseAfterSave = true;
+      mainWindow.webContents.send('app:saveBeforeClose');
+    } else if (choice === 1) {
+      forceClosing = true;
+      mainWindow.close();
+    }
+    // 2 (Cancelar): mantém a janela aberta, sem mais ações.
+  });
 
   mainWindow.on('closed', () => { mainWindow = null; });
 }
@@ -181,6 +231,34 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('app:platform', () => process.platform);
+
+  // Renderer informa estado de gravação a cada mudança em dirty/saving.
+  ipcMain.on('app:setRenderState', (_e, state) => {
+    if (state && typeof state === 'object') {
+      renderState = {
+        dirty: !!state.dirty,
+        saving: !!state.saving,
+      };
+    }
+  });
+
+  // Renderer reporta o resultado do save pedido por "Salvar e fechar".
+  ipcMain.on('app:confirmCloseAfterSave', (_e, ok) => {
+    pendingCloseAfterSave = false;
+    if (ok && mainWindow) {
+      forceClosing = true;
+      mainWindow.close();
+    } else if (mainWindow) {
+      // Falhou: avisa o usuário e mantém aberta.
+      dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        buttons: ['OK'],
+        title: 'Falha ao salvar',
+        message: 'Não foi possível gravar as alterações.',
+        detail: 'A janela continuará aberta. Verifique se a planilha está acessível e tente novamente.',
+      });
+    }
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
