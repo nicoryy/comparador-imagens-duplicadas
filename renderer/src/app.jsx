@@ -1,0 +1,445 @@
+// App principal — orquestra tudo: setup, leitura/gravação da planilha, atalhos, navegação.
+
+const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+const TWEAK_DEFAULTS = {
+  hue: 270,
+  density: 'comfortable',
+  cols: 6,
+  autoSave: true,
+};
+
+const App = () => {
+  const [setupConfig, setSetupConfig] = useState(null);
+  const [groupsData, setGroupsData] = useState(null); // { groups, totalImages, totalRows, columns, accessor }
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState(null);
+
+  const [values, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+  useEffect(() => {
+    if (values.hue != null) {
+      document.documentElement.style.setProperty('--hue', String(values.hue));
+    }
+  }, [values.hue]);
+
+  const [groupIdx, setGroupIdx] = useState(0);
+  const [statusByGroup, setStatusByGroup] = useState({});
+  const [completedGroups, setCompletedGroups] = useState({});
+  const [focusIdx, setFocusIdx] = useState(0);
+  const [zoomPct, setZoomPct] = useState(100);
+  const [viewMode, setViewMode] = useState('grid');
+  const [menuOpenIdx, setMenuOpenIdx] = useState(null);
+  const [zoomModal, setZoomModal] = useState(null);
+  const [compareMode, setCompareMode] = useState(null);
+
+  // Persistência
+  const [dirtyRows, setDirtyRows] = useState({}); // { rowNumber: 'keep'|'dup'|null }
+  const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
+  const [saveError, setSaveError] = useState(null);
+  const saveTimerRef = useRef(null);
+  const dirtyRef = useRef({});
+  const savingRef = useRef(false);
+  useEffect(() => { dirtyRef.current = dirtyRows; }, [dirtyRows]);
+
+  // ─── Carregamento da planilha ──────────────────────────────────────────────
+  useEffect(() => {
+    if (!setupConfig) { setGroupsData(null); return; }
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setLoadError(null);
+      try {
+        const result = await window.electronAPI.loadGroups({
+          filePath: setupConfig.file.path,
+          sheet: setupConfig.sheet,
+          mapping: setupConfig.mapping,
+        });
+        if (cancelled) return;
+        setGroupsData(result);
+        window.GROUPS_DATA = result.groups;
+        // pré-povoar status com initialStatus salvo na planilha
+        const seed = {};
+        result.groups.forEach((g, gi) => {
+          const s = {};
+          g.images.forEach((img, ii) => {
+            if (img.initialStatus) s[ii] = img.initialStatus;
+          });
+          if (Object.keys(s).length) seed[gi] = s;
+        });
+        setStatusByGroup(seed);
+        setCompletedGroups({});
+        setGroupIdx(0); setFocusIdx(0);
+      } catch (e) {
+        if (!cancelled) setLoadError(e.message || String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [setupConfig]);
+
+  const groups = groupsData?.groups || [];
+  const totalGroups = groups.length;
+  const group = groups[groupIdx];
+  const status = statusByGroup[groupIdx] || {};
+  const groupSize = group?.images?.length || 0;
+
+  const counts = useMemo(() => {
+    const k = Object.values(status).filter(s => s === 'keep').length;
+    const d = Object.values(status).filter(s => s === 'dup').length;
+    return { keep: k, dup: d, pend: Math.max(0, groupSize - k - d) };
+  }, [status, groupSize]);
+
+  const allClassified = groupSize > 0 && counts.pend === 0;
+  const completed = !!completedGroups[groupIdx];
+  const dirty = Object.keys(dirtyRows).length > 0;
+
+  // ─── Mutações ──────────────────────────────────────────────────────────────
+  const setStatus = useCallback((idx, newStatus) => {
+    if (!group) return;
+    const img = group.images[idx];
+    if (!img) return;
+    const rowNumber = img.rowNumber;
+    setStatusByGroup(prev => {
+      const cur = { ...(prev[groupIdx] || {}) };
+      if (newStatus === 'keep' || newStatus === 'dup') cur[idx] = newStatus;
+      else delete cur[idx];
+      return { ...prev, [groupIdx]: cur };
+    });
+    setDirtyRows(prev => ({ ...prev, [rowNumber]: newStatus || null }));
+  }, [groupIdx, group]);
+
+  const markAllOthersDup = useCallback((keepIdx) => {
+    if (!group) return;
+    const updates = {};
+    const groupStatus = {};
+    group.images.forEach((img, i) => {
+      const s = i === keepIdx ? 'keep' : 'dup';
+      groupStatus[i] = s;
+      updates[img.rowNumber] = s;
+    });
+    setStatusByGroup(prev => ({ ...prev, [groupIdx]: groupStatus }));
+    setDirtyRows(prev => ({ ...prev, ...updates }));
+  }, [group, groupIdx]);
+
+  const clearGroup = useCallback(() => {
+    if (!group) return;
+    const updates = {};
+    group.images.forEach(img => { updates[img.rowNumber] = null; });
+    setStatusByGroup(prev => ({ ...prev, [groupIdx]: {} }));
+    setDirtyRows(prev => ({ ...prev, ...updates }));
+  }, [group, groupIdx]);
+
+  const goPrev = useCallback(() => { setGroupIdx(i => Math.max(0, i - 1)); setFocusIdx(0); }, []);
+  const goNext = useCallback(() => { setGroupIdx(i => Math.min(totalGroups - 1, i + 1)); setFocusIdx(0); }, [totalGroups]);
+
+  const completeGroup = useCallback(() => {
+    setCompletedGroups(prev => ({ ...prev, [groupIdx]: true }));
+    saveNow(); // força gravação ao concluir
+    setTimeout(() => {
+      if (groupIdx < totalGroups - 1) goNext();
+    }, 200);
+  }, [groupIdx, goNext, totalGroups]);
+
+  // ─── Salvamento ────────────────────────────────────────────────────────────
+  const saveNow = useCallback(async () => {
+    if (!setupConfig) return;
+    if (savingRef.current) return;
+    const dirty = dirtyRef.current;
+    if (!dirty || Object.keys(dirty).length === 0) return;
+    savingRef.current = true;
+    setSaving(true); setSaveState('saving'); setSaveError(null);
+    try {
+      await window.electronAPI.saveStatuses({
+        filePath: setupConfig.file.path,
+        sheet: setupConfig.sheet,
+        mapping: setupConfig.mapping,
+        statuses: dirty,
+        statusLabels: { keep: 'MANTER', dup: 'DUPLICADA', none: '' },
+      });
+      setDirtyRows(prev => {
+        const next = { ...prev };
+        for (const k of Object.keys(dirty)) {
+          if (next[k] === dirty[k]) delete next[k];
+        }
+        return next;
+      });
+      setSaveState('saved');
+      setTimeout(() => setSaveState(s => s === 'saved' ? 'idle' : s), 1500);
+    } catch (err) {
+      setSaveState('error');
+      setSaveError(err.message || String(err));
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
+  }, [setupConfig]);
+
+  // Auto-save com debounce
+  useEffect(() => {
+    if (!values.autoSave) return;
+    if (!Object.keys(dirtyRows).length) return;
+    if (saving) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => { saveNow(); }, 800);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [dirtyRows, values.autoSave, saveNow, saving]);
+
+  // ─── Menu / compare flow ───────────────────────────────────────────────────
+  const handleMenuAction = useCallback((action, idx) => {
+    if (action === 'zoom' || action === 'meta') setZoomModal({ idx });
+    else if (action === 'compare') setCompareMode({ firstIdx: idx });
+    else if (action === 'reveal' && group) {
+      const img = group.images[idx];
+      alert(`Caminho da imagem:\n${img.imagePath || img.imageRaw || '—'}`);
+    }
+  }, [group]);
+
+  const handleFocus = useCallback((idx) => {
+    if (compareMode && compareMode.firstIdx != null && compareMode.secondIdx == null && idx !== compareMode.firstIdx) {
+      setCompareMode({ ...compareMode, secondIdx: idx });
+      return;
+    }
+    setFocusIdx(idx);
+  }, [compareMode]);
+
+  // ─── Atalhos de teclado ────────────────────────────────────────────────────
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.matches('input,textarea,select')) return;
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveNow(); return; }
+      if (zoomModal) {
+        if (e.key === 'Escape') setZoomModal(null);
+        if (e.key === 'ArrowLeft')  setZoomModal(z => z && z.idx > 0 ? { idx: z.idx - 1 } : z);
+        if (e.key === 'ArrowRight') setZoomModal(z => z && z.idx < groupSize - 1 ? { idx: z.idx + 1 } : z);
+        return;
+      }
+      if (compareMode && e.key === 'Escape') { setCompareMode(null); return; }
+
+      const k = e.key.toLowerCase();
+      if (k === 'm') { e.preventDefault(); setStatus(focusIdx, status[focusIdx] === 'keep' ? null : 'keep'); }
+      else if (k === 'd') { e.preventDefault(); setStatus(focusIdx, status[focusIdx] === 'dup' ? null : 'dup'); }
+      else if (k === 'n') { e.preventDefault(); goNext(); }
+      else if (k === 'p') { e.preventDefault(); goPrev(); }
+      else if (k === 'z') { e.preventDefault(); setZoomModal({ idx: focusIdx }); }
+      else if (k === 'c') { e.preventDefault(); setCompareMode({ firstIdx: focusIdx }); }
+      else if (e.key === 'Enter' && allClassified && !completed) { e.preventDefault(); completeGroup(); }
+      else if (e.key === 'ArrowRight') setFocusIdx(i => Math.min(groupSize - 1, i + 1));
+      else if (e.key === 'ArrowLeft')  setFocusIdx(i => Math.max(0, i - 1));
+      else if (e.key === 'ArrowDown')  setFocusIdx(i => Math.min(groupSize - 1, i + (values.cols || 6)));
+      else if (e.key === 'ArrowUp')    setFocusIdx(i => Math.max(0, i - (values.cols || 6)));
+      else if (/^[1-9]$/.test(e.key)) setFocusIdx(Math.min(groupSize - 1, parseInt(e.key, 10) - 1));
+      else if (e.key === '0' && groupSize >= 10) setFocusIdx(9);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [focusIdx, status, setStatus, goNext, goPrev, zoomModal, compareMode, groupSize, values.cols, allClassified, completed, completeGroup, saveNow]);
+
+  // Fecha menu de card ao clicar fora
+  const onMenu = (idx) => setMenuOpenIdx(prev => prev === idx ? null : idx);
+  useEffect(() => {
+    const close = () => setMenuOpenIdx(null);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, []);
+
+  // ─── Comparação calculada ──────────────────────────────────────────────────
+  const compareImages = compareMode && compareMode.secondIdx != null && group
+    ? { a: group.images[compareMode.firstIdx], ai: compareMode.firstIdx,
+        b: group.images[compareMode.secondIdx], bi: compareMode.secondIdx }
+    : null;
+
+  // ─── Render ────────────────────────────────────────────────────────────────
+  if (!setupConfig) {
+    return <SetupWizard onComplete={(cfg) => setSetupConfig(cfg)} />;
+  }
+
+  if (loading) {
+    return (
+      <div className="loader-overlay">
+        <div className="loader-card">
+          <div className="spinner"></div>
+          <div className="msg">Lendo planilha…</div>
+          <div className="sub mono">{setupConfig.file?.name} · {setupConfig.sheet}</div>
+        </div>
+      </div>
+    );
+  }
+  if (loadError) {
+    return (
+      <div className="loader-overlay">
+        <div className="loader-card error">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--dup)" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <div className="msg">Erro ao carregar a planilha</div>
+          <div className="sub">{loadError}</div>
+          <button className="btn" onClick={() => setSetupConfig(null)}>Reconfigurar</button>
+        </div>
+      </div>
+    );
+  }
+  if (!group) {
+    return (
+      <div className="loader-overlay">
+        <div className="loader-card">
+          <div className="msg">Nenhum grupo encontrado</div>
+          <div className="sub">A folha selecionada não contém grupos válidos.</div>
+          <button className="btn" onClick={() => setSetupConfig(null)}>Reconfigurar</button>
+        </div>
+      </div>
+    );
+  }
+
+  const cols = Math.max(2, Math.min(8, Number(values.cols) || 6));
+
+  return (
+    <div className="app" data-screen-label="Comparador">
+      <Sidebar
+        group={group}
+        groupIdx={groupIdx}
+        totalGroups={totalGroups}
+        status={status}
+        allStatus={statusByGroup}
+        completedGroups={completedGroups}
+        fileInfo={setupConfig}
+        onOpenZoom={() => setZoomModal({ idx: focusIdx })}
+        onReconfigure={() => setSetupConfig(null)}
+      />
+      <Header
+        groupIdx={groupIdx}
+        totalGroups={totalGroups}
+        group={group}
+        onPrev={goPrev}
+        onNext={goNext}
+        onComplete={completeGroup}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        allClassified={allClassified}
+        completed={completed}
+        dirty={dirty}
+        onSave={saveNow}
+        saving={saving}
+      />
+      <main className="main">
+        <div className="batch-bar">
+          <div className="left">
+            <span className="pill">
+              <span style={{ width: 6, height: 6, borderRadius: 3, background: 'var(--accent)', boxShadow: '0 0 8px var(--accent)' }}></span>
+              <span>Imagem ativa</span>
+              <span className="num">#{focusIdx + 1}</span>
+            </span>
+            <span className="pill"><span style={{ color: 'var(--keep)' }}>●</span> <span className="num">{counts.keep}</span> manter</span>
+            <span className="pill"><span style={{ color: 'var(--dup)' }}>●</span> <span className="num">{counts.dup}</span> duplicadas</span>
+            <span className="pill"><span style={{ color: 'var(--fg-3)' }}>●</span> <span className="num">{counts.pend}</span> pendentes</span>
+          </div>
+          <div className="right">
+            {counts.keep === 1 && counts.pend > 0 && (
+              <button className="link-btn" onClick={() => {
+                const keepIdx = Object.keys(status).find(k => status[k] === 'keep');
+                if (keepIdx != null) markAllOthersDup(parseInt(keepIdx, 10));
+              }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ display: 'inline', verticalAlign: '-2px', marginRight: 4 }}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                Marcar restantes como duplicadas
+              </button>
+            )}
+            <button className="link-btn" onClick={clearGroup}>Limpar grupo</button>
+          </div>
+        </div>
+
+        <div className="grid-wrap">
+          <div className={`grid ${viewMode === 'compact' ? 'compact' : ''}`}
+               style={{
+                 '--cols': cols,
+                 transform: `scale(${zoomPct/100})`,
+                 transformOrigin: 'top left',
+                 width: `${10000/zoomPct}%`,
+                 height: `${10000/zoomPct}%`,
+               }}>
+            {group.images.map((img, idx) => (
+              <Card
+                key={img.id}
+                img={img}
+                idx={idx}
+                status={status[idx]}
+                focused={focusIdx === idx}
+                comparePick={compareMode && (compareMode.firstIdx === idx)}
+                onSetStatus={setStatus}
+                onFocus={handleFocus}
+                onZoom={(i) => setZoomModal({ idx: i })}
+                onMenu={onMenu}
+                menuOpen={menuOpenIdx === idx}
+                onMenuAction={handleMenuAction}
+                mapping={setupConfig.mapping}
+              />
+            ))}
+          </div>
+        </div>
+      </main>
+      <Footer
+        zoom={zoomPct}
+        setZoom={setZoomPct}
+        onPrev={goPrev}
+        onNext={goNext}
+        groupIdx={groupIdx}
+        totalGroups={totalGroups}
+      />
+
+      {compareMode && compareMode.secondIdx == null && (
+        <ComparePicker onCancel={() => setCompareMode(null)} />
+      )}
+      {compareImages && (
+        <CompareModal {...compareImages} onClose={() => setCompareMode(null)} />
+      )}
+      {zoomModal && group.images[zoomModal.idx] && (
+        <ZoomModal
+          img={group.images[zoomModal.idx]}
+          idx={zoomModal.idx}
+          group={group}
+          setIdx={(i) => setZoomModal({ idx: i })}
+          onClose={() => setZoomModal(null)}
+        />
+      )}
+
+      <SaveIndicator state={saveState} dirty={dirty} error={saveError} />
+
+      <TweaksPanel title="Preferências">
+        <TweakSection label="Aparência" />
+        <TweakSlider label="Tom de acento" value={values.hue} min={0} max={360} step={5} unit="°"
+          onChange={(v) => setTweak('hue', v)} />
+        <TweakRadio label="Densidade" value={values.density}
+          options={['comfortable', 'compact']}
+          onChange={(v) => { setTweak('density', v); setViewMode(v === 'compact' ? 'compact' : 'grid'); }} />
+        <TweakSlider label="Colunas no grid" value={values.cols} min={2} max={8} step={1}
+          onChange={(v) => setTweak('cols', v)} />
+
+        <TweakSection label="Gravação" />
+        <TweakToggle label="Salvar automaticamente" value={values.autoSave}
+          onChange={(v) => setTweak('autoSave', v)} />
+        <TweakButton label="Salvar agora" onClick={saveNow} />
+
+        <TweakSection label="Grupo atual" />
+        <TweakButton label="Manter 1ª, duplicar demais" onClick={() => markAllOthersDup(0)} />
+        <TweakButton label="Limpar classificações" secondary onClick={clearGroup} />
+        <TweakButton label="Reconfigurar planilha" secondary onClick={() => setSetupConfig(null)} />
+      </TweaksPanel>
+    </div>
+  );
+};
+
+const SaveIndicator = ({ state, dirty, error }) => {
+  if (state === 'idle' && !dirty) return null;
+  let cls = 'save-indicator', label = '';
+  if (state === 'saving') { cls += ' saving'; label = 'Salvando…'; }
+  else if (state === 'saved') { cls += ' saved'; label = 'Salvo na planilha'; }
+  else if (state === 'error') { cls += ' error'; label = `Erro: ${error || 'falha ao gravar'}`; }
+  else if (dirty) { label = 'Alterações pendentes'; }
+  const spin = state === 'saving' ? 'spin' : '';
+  return (
+    <div className={cls}>
+      <span className={`dot ${spin}`}></span>
+      <span>{label}</span>
+    </div>
+  );
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
