@@ -14,6 +14,12 @@ let mainWindow = null;
 let xlsxWorker = null;
 const pendingJobs = new Map();
 let jobSeq = 0;
+// Serializa saves por arquivo. Sem isso, debounce auto-save + saveNow() do
+// "completeGroup" podem disparar dois writes simultâneos no mesmo path,
+// deixando o tmp em estado inconsistente.
+const saveQueues = new Map(); // filePath -> Promise
+// Marca de drain no shutdown: quando true, before-quit já esperou e pode terminar.
+let quittingAfterDrain = false;
 
 // Estado de gravação reportado pelo renderer. Usado pra bloquear o fechamento
 // da janela enquanto há alterações pendentes ou um save em andamento.
@@ -62,6 +68,25 @@ function runWorkerJob(action, payload) {
     pendingJobs.set(id, { resolve, reject });
     worker.postMessage({ id, action, payload });
   });
+}
+
+// Enfileira saves por filePath: cada novo save só começa depois do anterior
+// concluir (sucesso ou erro). Garante atomicidade ponta-a-ponta — o worker
+// nunca recebe dois writes concorrentes para o mesmo arquivo.
+function enqueueSave(filePath, payload) {
+  const prev = saveQueues.get(filePath) || Promise.resolve();
+  const next = prev
+    .catch(() => { /* erro do anterior não bloqueia o próximo */ })
+    .then(() => runWorkerJob('saveStatuses', payload));
+  saveQueues.set(filePath, next);
+  next.finally(() => {
+    if (saveQueues.get(filePath) === next) saveQueues.delete(filePath);
+  });
+  return next;
+}
+
+function hasPendingWork() {
+  return pendingJobs.size > 0 || saveQueues.size > 0;
 }
 
 function resolveAppImagePath(url) {
@@ -180,11 +205,38 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
-  if (xlsxWorker) {
-    try { xlsxWorker.terminate(); } catch (_) { /* ignore */ }
-    xlsxWorker = null;
+app.on('before-quit', (e) => {
+  if (quittingAfterDrain) return;
+
+  // Se não há nada em voo, terminar imediatamente.
+  if (!hasPendingWork()) {
+    if (xlsxWorker) {
+      try { xlsxWorker.terminate(); } catch (_) { /* ignore */ }
+      xlsxWorker = null;
+    }
+    return;
   }
+
+  // Há save em andamento. Adiar shutdown até drenar (com timeout duro de 30s)
+  // para evitar matar o worker no meio de um write e zerar o arquivo.
+  e.preventDefault();
+  const DRAIN_TIMEOUT_MS = 30_000;
+  const start = Date.now();
+  const tick = () => {
+    const drained = !hasPendingWork();
+    const expired = (Date.now() - start) > DRAIN_TIMEOUT_MS;
+    if (drained || expired) {
+      quittingAfterDrain = true;
+      if (xlsxWorker) {
+        try { xlsxWorker.terminate(); } catch (_) { /* ignore */ }
+        xlsxWorker = null;
+      }
+      app.quit();
+    } else {
+      setTimeout(tick, 100);
+    }
+  };
+  tick();
 });
 
 function registerIpcHandlers() {
@@ -217,8 +269,10 @@ function registerIpcHandlers() {
   ipcMain.handle('xlsx:loadGroups', async (_e, args) =>
     runWorkerJob('loadGroups', args));
 
-  ipcMain.handle('xlsx:saveStatuses', async (_e, args) =>
-    runWorkerJob('saveStatuses', args));
+  ipcMain.handle('xlsx:saveStatuses', async (_e, args) => {
+    if (!args || !args.filePath) throw new Error('filePath ausente para saveStatuses');
+    return enqueueSave(args.filePath, args);
+  });
 
   ipcMain.handle('image:resolve', (_e, absPath) => {
     if (!absPath) return null;
