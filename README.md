@@ -1,6 +1,6 @@
 # Comparador de Imagens Duplicadas
 
-Aplicativo desktop em **Electron + React** para auditoria manual de grupos de imagens potencialmente duplicadas. Foi desenhado para máxima velocidade operacional, mínima fadiga visual e tomada de decisão rápida — interface premium em dark mode (paleta OKLCH), atalhos de teclado densos e leitura/gravação massiva direto em planilhas `.xlsx`/`.xlsm` (preservando macros, fórmulas, formatação e demais colunas).
+Aplicativo desktop em **Electron + React** para auditoria manual de grupos de imagens potencialmente duplicadas. Foi desenhado para máxima velocidade operacional, mínima fadiga visual e tomada de decisão rápida — interface premium em dark mode (paleta OKLCH), atalhos de teclado densos e leitura/gravação massiva direto em planilhas `.xlsx`/`.xlsm` (preservando fórmulas, formatação, demais colunas e — em `.xlsm` — o `vbaProject.bin` original via patch ZIP pós-gravação).
 
 > Caso de uso típico: revisão de evidências fotográficas de campo (vistorias, circuitos, cadastros) onde uma planilha já agrupa as fotos por ocorrência e o operador precisa decidir, em cada grupo, **qual imagem manter** e **quais marcar como duplicadas**.
 
@@ -37,7 +37,9 @@ Aplicativo desktop em **Electron + React** para auditoria manual de grupos de im
 - **Grid configurável de 2 a 8 colunas** com cartões mostrando a imagem real, número, status, badge de tipo e tooltip de metadados (ID, circuito, observação, data).
 - **Múltiplos "manter" por grupo** — sem limite imposto.
 - **Pré-povoamento** dos status a partir de marcações já existentes na planilha (`MANTER`/`DUPLICADA`/`x`/`sim`/etc.).
-- **Auto-save com debounce de 800 ms** direto no arquivo, preservando macros (`.xlsm`), fórmulas e demais colunas.
+- **Auto-save com debounce de 800 ms** direto no arquivo, com **gravação atômica** (escreve em `.tmp`, fsync, rename) e **backup rotativo** dos 5 estados anteriores em `.backup/` — o arquivo original nunca é truncado.
+- **Macros (`.xlsm`) preservadas** — o `vbaProject.bin` do arquivo original é reinjetado no zip recém gravado (ExcelJS sozinho descartaria as macros).
+- **Detecção de arquivo em uso** — se o Excel estiver com a planilha aberta, o save aborta com mensagem clara em vez de corromper.
 - **Indicador de gravação** (saving / saved / error / dirty) sempre visível no canto da tela.
 - **Fechamento protegido** — tentar fechar a janela (botão X, Alt+F4, `Cmd+Q`) com alterações pendentes ou save em andamento abre um diálogo nativo com três opções: "Salvar e fechar", "Fechar sem salvar", "Cancelar". Evita corromper a planilha por fechamento acidental.
 - **Atalhos configuráveis** — painel dedicado para reatribuir teclas de cada ação, com detecção de conflitos e persistência em `localStorage`.
@@ -99,7 +101,7 @@ Três passos lineares:
 - **Zoom global** ajustável via footer (slider de escala da grid).
 - **Sidebar** com progresso global, navegação entre grupos e botão de "Reconfigurar".
 - **Concluir grupo** — só habilita quando todas as imagens do grupo estão classificadas. Marca o grupo como concluído, dispara gravação imediata e avança para o próximo.
-- **Auto-save** — alterações são gravadas com debounce de 800 ms diretamente no arquivo (preserva macros em `.xlsm`).
+- **Auto-save** — alterações são gravadas com debounce de 800 ms via pipeline atômico: escrita em `.tmp` ao lado do alvo, validação (zip íntegro, tamanho mínimo), `fsync`, rename atômico e backup rotativo do estado anterior em `.backup/`. Em qualquer falha o `.tmp` é descartado e o arquivo original permanece intocado.
 - **Modais de zoom e comparação** (lado a lado, com `Esc` para fechar).
 
 ### 3. Painel de preferências
@@ -136,7 +138,7 @@ O painel de configuração detecta conflitos (mesma tecla em duas ações) e per
 
 ## Formato esperado da planilha
 
-Linha 1 = cabeçalho. Cada linha subsequente = uma imagem. As colunas mapeadas para "Manter" e "Duplicada" são gravadas com `MANTER` ou `DUPLICADA` (ou vazio se a marcação for limpa). **Todas as outras colunas, fórmulas e macros (`.xlsm`) são preservadas** — o ExcelJS reescreve apenas as células alteradas.
+Linha 1 = cabeçalho. Cada linha subsequente = uma imagem. As colunas mapeadas para "Manter" e "Duplicada" são gravadas com `MANTER` ou `DUPLICADA` (ou vazio se a marcação for limpa). **Demais colunas, fórmulas e formatação são preservadas** pelo ExcelJS. **Macros (`.xlsm`)** também são preservadas — o app extrai o `vbaProject.bin` do arquivo original antes da escrita, deixa o ExcelJS gravar o `.tmp`, e em seguida reinjeta o `vbaProject.bin`, atualiza `[Content_Types].xml`, adiciona a `Relationship` em `xl/_rels/workbook.xml.rels` e restaura o `codeName` em `xl/workbook.xml` antes do rename final.
 
 Exemplo:
 
@@ -200,6 +202,34 @@ Para planilhas que apontam para páginas HTML (não imagens diretas) — caso co
 3. Para cada candidata, faz `HEAD` e ordena por `Content-Length` — escolhe a maior.
 4. Cacheia o resultado por 30 minutos por URL.
 5. Para domínios que exigem (`*.sinapi.com.br`), injeta automaticamente `Referer` da página de origem via `webRequest.onBeforeSendHeaders` — caso contrário a CDN devolve 404.
+
+## Integridade dos dados (anti-corrupção)
+
+Toda gravação passa por um pipeline desenhado para tornar **impossível** deixar o arquivo original em estado parcial/zerado:
+
+1. **Pre-check** — `fs.openSync(path, 'r+')` para detectar `EBUSY`/`EPERM` (Excel aberto). Se falhar, aborta antes de qualquer modificação.
+2. **Captura VBA** (somente `.xlsm`) — lê o zip original e guarda em memória `xl/vbaProject.bin`, `xl/_rels/vbaProject.bin.rels` (se houver) e o `codeName` do `workbookPr`.
+3. **Backup rotativo** — copia o arquivo atual para `.backup/<nome>.<timestamp-ms>.bak` ao lado dele. Mantém os 5 mais recentes; os demais são removidos.
+4. **Escrita em tmp** — ExcelJS grava em `<arquivo>.tmp-<pid>-<ts>`. O arquivo original não é tocado.
+5. **Reinjeção VBA** (somente `.xlsm`) — abre o `.tmp` como zip, adiciona o `vbaProject.bin` capturado, atualiza `[Content_Types].xml` (Override), insere `Relationship` em `xl/_rels/workbook.xml.rels` e restaura `codeName` em `xl/workbook.xml`. Regrava o `.tmp` com MIME `application/vnd.ms-excel.sheet.macroEnabled.12`.
+6. **Validação** — confere assinatura ZIP (`PK\x03\x04`), carga via `JSZip.loadAsync` (EOCD presente), tamanho ≥ 200 bytes.
+7. **`fsync`** — força flush do buffer de página para o disco antes do rename.
+8. **Rename atômico** — `fs.rename(tmp, alvo)` no mesmo volume. No Windows usa `ReplaceFileW` semantics.
+9. **Em qualquer falha** — `.tmp` é removido; o arquivo original permanece com o conteúdo anterior intacto.
+
+Além disso:
+
+- **Saves serializados por arquivo** — no main process há uma fila promise por `filePath`, então debounce + `saveNow()` jamais disparam dois writes concorrentes no mesmo arquivo.
+- **Shutdown protegido** — `before-quit` aguarda a fila drenar (timeout 30 s) antes de chamar `worker.terminate()`. Fechar a janela com save em andamento não interrompe o write.
+- **Fechamento bloqueado por dirty/saving** — janela exibe diálogo nativo "Salvar e fechar / Fechar sem salvar / Cancelar". O modo "Fechar sem salvar" ainda assim espera o write atual terminar antes do shutdown.
+
+**Recuperação manual:** se algo der errado, abra a pasta `.backup/` ao lado da planilha. Cada `.bak` é uma cópia byte-a-byte da planilha antes daquele save — basta renomear de volta para `.xlsx`/`.xlsm`.
+
+**Smoke test do pipeline:**
+```bash
+node scripts/smoke-save.js
+```
+Valida atomic write, preservação de macros, rotação de backups e detecção de arquivo inexistente.
 
 ## Limitações conhecidas
 
