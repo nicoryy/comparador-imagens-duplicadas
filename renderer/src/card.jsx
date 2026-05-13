@@ -5,7 +5,6 @@ const Card = React.memo(function Card({ img, idx, status, focused, comparePick, 
   const isDup = status === 'dup';
   const chipRef = React.useRef(null);
   const [chipRect, setChipRect] = React.useState(null);
-  const [imgLoaded, setImgLoaded] = React.useState(false);
 
   const cardClass = ['card',
     focused && 'focused',
@@ -22,9 +21,32 @@ const Card = React.memo(function Card({ img, idx, status, focused, comparePick, 
   const hasAnyValue = !!(meta.ID || meta.CIRCUITO || meta.OBSERVACAO || meta.DATA);
   const anyMeta  = (showId || showCir || showObs || showData) && hasAnyValue;
 
-  const { src, state: srcState, candidates, activeIdx, setActiveIdx } = useResolvedImageSrc(img);
-  React.useEffect(() => { setImgLoaded(false); }, [src]);
-  const imgState = srcState === 'loading' ? 'loading' : (srcState === 'error' ? 'error' : (imgLoaded ? 'loaded' : 'loading'));
+  // Detecta quando o card entra (ou está perto de entrar) na viewport.
+  // Usado pra só ativar o watchdog do useImageWithRetry quando o browser
+  // de fato começa a baixar — `loading="lazy"` adia o fetch até a chegada,
+  // e disparar timeout antes disso geraria falha falsa.
+  const frameRef = React.useRef(null);
+  const [nearViewport, setNearViewport] = React.useState(false);
+  React.useEffect(() => {
+    if (nearViewport || !frameRef.current) return;
+    const obs = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) {
+        setNearViewport(true);
+        obs.disconnect();
+      }
+    }, { rootMargin: '300px' });
+    obs.observe(frameRef.current);
+    return () => obs.disconnect();
+  }, [nearViewport]);
+
+  const { src: resolvedSrc, state: srcState, candidates, activeIdx, setActiveIdx } = useResolvedImageSrc(img);
+  const watchdogEnabled = nearViewport || focused;
+  const { src, loaded: imgLoaded, failed: imgFailed, retryCount, onLoad: onImgLoad, onError: onImgError, manualRetry } = useImageWithRetry(resolvedSrc, { enabled: watchdogEnabled });
+  const imgState = srcState === 'loading' ? 'loading'
+    : srcState === 'error' ? 'error'
+    : imgFailed ? 'error'
+    : imgLoaded ? 'loaded'
+    : 'loading';
 
   // Expõe ao App um callback de navegação entre as imagens internas.
   // Usa ref interna pra que o callback continue válido sem re-registrar a cada render.
@@ -51,7 +73,7 @@ const Card = React.memo(function Card({ img, idx, status, focused, comparePick, 
         </div>
       </div>
 
-      <div className="image-frame" onDoubleClick={(e) => { e.stopPropagation(); onZoom(idx); }}>
+      <div ref={frameRef} className="image-frame" onDoubleClick={(e) => { e.stopPropagation(); onZoom(idx); }}>
         {src && (
           <img
             className="real"
@@ -59,18 +81,27 @@ const Card = React.memo(function Card({ img, idx, status, focused, comparePick, 
             alt={meta.ID || `imagem ${idx + 1}`}
             loading="lazy"
             decoding="async"
+            fetchpriority={focused ? 'high' : 'auto'}
             draggable={false}
-            onLoad={() => setImgLoaded(true)}
-            onError={() => setImgLoaded(false)}
+            onLoad={onImgLoad}
+            onError={onImgError}
             style={{ visibility: imgState === 'loaded' ? 'visible' : 'hidden' }}
           />
         )}
-        {imgState === 'loading' && <div className="img-skeleton"></div>}
+        {imgState === 'loading' && (
+          <>
+            <div className="img-skeleton"></div>
+            {retryCount > 0 && (
+              <div className="img-retry-badge mono">Recarregando (tentativa {retryCount + 1})…</div>
+            )}
+          </>
+        )}
         {imgState === 'error' && (
           <div className="img-error">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-            <div>Imagem não encontrada</div>
+            <div>Imagem não disponível</div>
             <div style={{ marginTop: 4, opacity: 0.7 }}>{img.imageRaw}</div>
+            <button className="link-btn" style={{ marginTop: 8 }} onClick={(e) => { e.stopPropagation(); manualRetry(); }}>Tentar novamente</button>
           </div>
         )}
 
@@ -254,9 +285,68 @@ function MetaTooltip({ rect, meta, mapping }) {
   );
 }
 
+// Acelerador / fallback de carregamento.
+// Se o <img> não emitir onLoad em `timeoutMs`, força recarga com cache-buster
+// (`?_r=N`). Após `maxRetries` falhas, marca como erro definitivo. Também
+// reage a onError do próprio elemento (404/abort) tentando novamente.
+function appendCacheBuster(url, n) {
+  if (!url) return url;
+  if (/^data:/i.test(url)) return url;
+  const sep = url.includes('?') ? '&' : '?';
+  return `${url}${sep}_r=${n}`;
+}
+
+function useImageWithRetry(rawSrc, { timeoutMs = 9000, maxRetries = 2, enabled = true } = {}) {
+  const [retry, setRetry] = React.useState(0);
+  const [loaded, setLoaded] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+
+  // Reset ao trocar de URL (novo candidato ou nova imagem).
+  React.useEffect(() => {
+    setRetry(0);
+    setLoaded(false);
+    setFailed(false);
+  }, [rawSrc]);
+
+  // Watchdog: dispara recarregamento se o load demorar demais.
+  // Só roda quando `enabled` (no Card, depende de visibilidade — `loading="lazy"`
+  // adia o fetch até a viewport, então não faz sentido contar timeout antes disso).
+  React.useEffect(() => {
+    if (!rawSrc || loaded || failed || !enabled) return;
+    const t = setTimeout(() => {
+      setRetry(prev => {
+        if (prev < maxRetries) return prev + 1;
+        setFailed(true);
+        return prev;
+      });
+    }, timeoutMs);
+    return () => clearTimeout(t);
+  }, [rawSrc, retry, loaded, failed, timeoutMs, maxRetries, enabled]);
+
+  const src = rawSrc && retry > 0 ? appendCacheBuster(rawSrc, retry) : rawSrc;
+
+  const onLoad = React.useCallback(() => setLoaded(true), []);
+  const onError = React.useCallback(() => {
+    setRetry(prev => {
+      if (prev < maxRetries) return prev + 1;
+      setFailed(true);
+      return prev;
+    });
+  }, [maxRetries]);
+  const manualRetry = React.useCallback(() => {
+    setLoaded(false);
+    setFailed(false);
+    setRetry(r => r + 1);
+  }, []);
+
+  return { src, loaded, failed, retryCount: retry, onLoad, onError, manualRetry };
+}
+
 window.Card = Card;
 window.MetaTooltip = MetaTooltip;
 window.classifyImage = classifyImage;
 window.buildImageUrl = buildImageUrl;
 window.resolveRemoteCached = resolveRemoteCached;
 window.useResolvedImageSrc = useResolvedImageSrc;
+window.useImageWithRetry = useImageWithRetry;
+window.appendCacheBuster = appendCacheBuster;

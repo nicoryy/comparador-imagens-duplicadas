@@ -19,9 +19,32 @@ const ZoomModal = ({ img, idx, onClose, group, setIdx }) => {
     setScale(s => clamp(s + (e.deltaY > 0 ? -0.1 : 0.1), 0.25, 6));
   };
 
-  const { src, state: srcState } = useResolvedImageSrc(img);
+  const { src: resolvedSrc, state: srcState, candidates, activeIdx, setActiveIdx } = useResolvedImageSrc(img);
+  const { src, loaded, failed, retryCount, onLoad, onError, manualRetry } = useImageWithRetry(resolvedSrc);
   const meta = img.meta || {};
   const total = group?.images?.length || 0;
+  const hasMulti = candidates.length > 1;
+
+  // Teclado local em capture-phase: alterna candidatos da imagem atual sem
+  // colidir com a navegação entre pontos (ArrowLeft/ArrowRight) tratada
+  // pelo App.jsx. Usa ArrowUp/ArrowDown e Shift+ArrowLeft/ArrowRight.
+  React.useEffect(() => {
+    if (!hasMulti) return;
+    const onKey = (e) => {
+      if (e.target.matches && e.target.matches('input, textarea, select')) return;
+      const prev = (e.key === 'ArrowUp') || (e.shiftKey && e.key === 'ArrowLeft');
+      const next = (e.key === 'ArrowDown') || (e.shiftKey && e.key === 'ArrowRight');
+      if (!prev && !next) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setActiveIdx(i => {
+        if (prev) return Math.max(0, i - 1);
+        return Math.min(candidates.length - 1, i + 1);
+      });
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [hasMulti, candidates.length, setActiveIdx]);
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -48,11 +71,36 @@ const ZoomModal = ({ img, idx, onClose, group, setIdx }) => {
             </button>
           </div>
         </div>
-        <div className="modal-body" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} onWheel={onWheel} style={{ cursor: dragRef.current ? 'grabbing' : 'grab' }}>
+        <div className="modal-body" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} onWheel={onWheel} style={{ cursor: dragRef.current ? 'grabbing' : 'grab', position: 'relative' }}>
+          {hasMulti && (
+            <div className="img-pager modal-pager">
+              <button onClick={(e) => { e.stopPropagation(); setActiveIdx(i => Math.max(0, i - 1)); }} disabled={activeIdx === 0} title="Imagem anterior do mesmo ponto (↑ / Shift+←)">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+              </button>
+              <span className="label">{activeIdx + 1}<span className="total">/{candidates.length}</span></span>
+              <button onClick={(e) => { e.stopPropagation(); setActiveIdx(i => Math.min(candidates.length - 1, i + 1)); }} disabled={activeIdx === candidates.length - 1} title="Próxima imagem do mesmo ponto (↓ / Shift+→)">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+              </button>
+            </div>
+          )}
           <div className="zoom-stage" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${scale})`, transition: dragRef.current ? 'none' : 'transform .15s' }}>
             {srcState === 'loading' && <div style={{ color: 'var(--fg-3)' }}>Resolvendo imagem da galeria…</div>}
-            {srcState === 'ready' && src && <img className="real" src={src} alt={meta.ID || ''} draggable={false} />}
-            {srcState === 'error' && <div style={{ color: 'var(--fg-3)' }}>Imagem não disponível</div>}
+            {srcState === 'ready' && src && !failed && (
+              <img className="real" src={src} alt={meta.ID || ''} draggable={false}
+                   onLoad={onLoad} onError={onError}
+                   style={{ visibility: loaded ? 'visible' : 'hidden' }} />
+            )}
+            {srcState === 'ready' && !loaded && !failed && (
+              <div style={{ color: 'var(--fg-3)' }}>
+                {retryCount > 0 ? `Recarregando (tentativa ${retryCount + 1})…` : 'Carregando…'}
+              </div>
+            )}
+            {(srcState === 'error' || failed) && (
+              <div style={{ color: 'var(--fg-3)', textAlign: 'center' }}>
+                <div>Imagem não disponível</div>
+                <button className="btn" style={{ marginTop: 10 }} onClick={(e) => { e.stopPropagation(); manualRetry(); }}>Tentar novamente</button>
+              </div>
+            )}
           </div>
         </div>
         <div className="modal-foot">
@@ -61,7 +109,10 @@ const ZoomModal = ({ img, idx, onClose, group, setIdx }) => {
             {meta.DATA && <span>{formatDate(meta.DATA)}</span>}
             {meta.OBSERVACAO && <span style={{ fontStyle: 'italic', color: 'var(--fg-3)' }}>{meta.OBSERVACAO}</span>}
           </span>
-          <span className="mono" style={{ color: 'var(--fg-3)' }}>arraste · roda do mouse · <span style={{ padding: '2px 6px', background: 'var(--bg-3)', borderRadius: 4 }}>Esc</span></span>
+          <span className="mono" style={{ color: 'var(--fg-3)' }}>
+            {hasMulti && <>↑↓ alterna · </>}
+            arraste · roda do mouse · <span style={{ padding: '2px 6px', background: 'var(--bg-3)', borderRadius: 4 }}>Esc</span>
+          </span>
         </div>
       </div>
     </div>
@@ -99,15 +150,42 @@ const CompareModal = ({ a, b, ai, bi, onClose }) => {
 };
 
 const CompareCell = ({ img, i }) => {
-  const { src, state } = useResolvedImageSrc(img);
+  const { src: resolvedSrc, state, candidates, activeIdx, setActiveIdx } = useResolvedImageSrc(img);
+  const { src, loaded, failed, retryCount, onLoad, onError, manualRetry } = useImageWithRetry(resolvedSrc);
   const m = img.meta || {};
+  const hasMulti = candidates.length > 1;
   return (
     <div className="compare-cell">
       <div className="label">Imagem #{i + 1}{m.ID ? ` · ${m.ID}` : ''}</div>
-      <div className="compare-img-wrap">
+      <div className="compare-img-wrap" style={{ position: 'relative' }}>
         {state === 'loading' && <div style={{ color: 'var(--fg-3)' }}>Resolvendo imagem…</div>}
-        {state === 'ready' && src && <img className="real" src={src} alt={m.ID || ''} draggable={false} />}
-        {state === 'error' && <div style={{ color: 'var(--fg-3)' }}>Imagem não disponível</div>}
+        {state === 'ready' && src && !failed && (
+          <img className="real" src={src} alt={m.ID || ''} draggable={false}
+               onLoad={onLoad} onError={onError}
+               style={{ visibility: loaded ? 'visible' : 'hidden' }} />
+        )}
+        {state === 'ready' && !loaded && !failed && (
+          <div style={{ color: 'var(--fg-3)', position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}>
+            {retryCount > 0 ? `Recarregando (${retryCount + 1})…` : 'Carregando…'}
+          </div>
+        )}
+        {(state === 'error' || failed) && (
+          <div style={{ color: 'var(--fg-3)', textAlign: 'center' }}>
+            <div>Imagem não disponível</div>
+            <button className="btn" style={{ marginTop: 8 }} onClick={(e) => { e.stopPropagation(); manualRetry(); }}>Tentar novamente</button>
+          </div>
+        )}
+        {hasMulti && (
+          <div className="img-pager">
+            <button onClick={(e) => { e.stopPropagation(); setActiveIdx(j => Math.max(0, j - 1)); }} disabled={activeIdx === 0} title="Imagem anterior deste ponto">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span className="label">{activeIdx + 1}<span className="total">/{candidates.length}</span></span>
+            <button onClick={(e) => { e.stopPropagation(); setActiveIdx(j => Math.min(candidates.length - 1, j + 1)); }} disabled={activeIdx === candidates.length - 1} title="Próxima imagem deste ponto">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        )}
       </div>
       <div className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'center' }}>
         {m.CIRCUITO && <span style={{ color: 'var(--accent)' }}>{m.CIRCUITO}</span>}

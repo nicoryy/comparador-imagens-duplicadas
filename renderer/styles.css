@@ -341,6 +341,27 @@ input, select, textarea { font-family: inherit; }
 }
 .image-frame .img-error svg { color: var(--dup); margin-bottom: 6px; }
 
+/* Badge de "recarregando" no canto inferior dos cards e modais */
+.img-retry-badge {
+  position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+  z-index: 6;
+  font-size: 10.5px; padding: 3px 9px; border-radius: 999px;
+  background: oklch(0 0 0 / 0.7); backdrop-filter: blur(8px);
+  border: 1px solid var(--accent-soft); color: var(--accent);
+  white-space: nowrap; pointer-events: none;
+  animation: retry-pulse 1.4s infinite;
+}
+@keyframes retry-pulse {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* Pager de candidatos dentro do ZoomModal — flutua sobre o stage */
+.img-pager.modal-pager {
+  top: 12px;
+  z-index: 6;
+}
+
 .card-bottom {
   display: flex; align-items: stretch;
   padding: 8px;
