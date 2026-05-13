@@ -122,10 +122,15 @@ const Card = React.memo(function Card({ img, idx, status, focused, comparePick, 
                onMouseEnter={() => { if (chipRef.current) setChipRect(chipRef.current.getBoundingClientRect()); }}
                onMouseLeave={() => setChipRect(null)}
                onClick={(e) => e.stopPropagation()}>
-            {showId && meta.ID && <span className="id">{meta.ID}</span>}
-            {showCir && meta.CIRCUITO && <span className="cir">{meta.CIRCUITO}</span>}
-            {showData && !showCir && meta.DATA && <span className="when">{formatTime(meta.DATA)}</span>}
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--fg-3)', flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <div className="meta-chip-row">
+              {showId && meta.ID && <span className="id">{meta.ID}</span>}
+              {showCir && meta.CIRCUITO && <span className="cir">{meta.CIRCUITO}</span>}
+              {showData && !showCir && meta.DATA && <span className="when">{formatTime(meta.DATA)}</span>}
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--fg-3)', flexShrink: 0 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            </div>
+            {showObs && meta.OBSERVACAO && (
+              <span className="obs">{meta.OBSERVACAO}</span>
+            )}
           </div>
         )}
         {anyMeta && chipRect && (

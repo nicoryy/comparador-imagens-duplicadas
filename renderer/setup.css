@@ -169,7 +169,7 @@
 /* ----- Per-card metadata tooltip ----- */
 .meta-chip {
   position: absolute; left: 8px; bottom: 8px; right: 8px;
-  display: flex; align-items: center; gap: 6px; justify-content: space-between;
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px;
   padding: 4px 8px;
   background: oklch(0 0 0 / 0.7); backdrop-filter: blur(8px);
   border: 1px solid oklch(1 0 0 / 0.08);
@@ -181,10 +181,12 @@
   max-width: calc(100% - 16px);
   overflow: hidden;
 }
-.meta-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meta-chip .meta-chip-row { display: flex; align-items: center; gap: 6px; justify-content: space-between; min-width: 0; }
+.meta-chip .meta-chip-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .meta-chip .id { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--fg-0); flex-shrink: 0; }
 .meta-chip .cir { color: var(--accent); font-family: 'JetBrains Mono', monospace; }
 .meta-chip .when { color: var(--fg-2); font-family: 'JetBrains Mono', monospace; }
+.meta-chip .obs { color: var(--fg-2); font-style: italic; font-size: 10px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .meta-tooltip {
   position: fixed;
