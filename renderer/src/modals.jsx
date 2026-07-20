@@ -4,6 +4,7 @@ const ZoomModal = ({ img, idx, onClose, group, setIdx }) => {
   const [scale, setScale] = React.useState(1);
   const [pan, setPan] = React.useState({ x: 0, y: 0 });
   const dragRef = React.useRef(null);
+  const bodyRef = React.useRef(null);
 
   React.useEffect(() => { setScale(1); setPan({ x: 0, y: 0 }); }, [idx]);
 
@@ -14,16 +15,37 @@ const ZoomModal = ({ img, idx, onClose, group, setIdx }) => {
   };
   const onMouseUp = () => { dragRef.current = null; };
 
-  const onWheel = (e) => {
-    e.preventDefault();
-    setScale(s => clamp(s + (e.deltaY > 0 ? -0.1 : 0.1), 0.25, 6));
-  };
-
   const { src: resolvedSrc, state: srcState, candidates, activeIdx, setActiveIdx } = useResolvedImageSrc(img);
   const { src, loaded, failed, retryCount, onLoad, onError, manualRetry } = useImageWithRetry(resolvedSrc);
   const meta = img.meta || {};
   const total = group?.images?.length || 0;
   const hasMulti = candidates.length > 1;
+
+  // Wheel nativo (passive: false) pra `preventDefault` funcionar — o onWheel
+  // do React é passivo e dispara warning. Ctrl+scroll = zoom; scroll puro
+  // alterna candidatos do mesmo ponto. Accumulator suaviza trackpad.
+  React.useEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    const acc = { sum: 0, dir: 0, lastStepAt: 0 };
+    const onWheel = (e) => {
+      e.preventDefault();
+      if (e.ctrlKey) {
+        setScale(s => clamp(s + (e.deltaY > 0 ? -0.1 : 0.1), 0.25, 6));
+        return;
+      }
+      if (candidates.length <= 1) return;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      if (dir !== acc.dir) { acc.sum = 0; acc.dir = dir; }
+      acc.sum += Math.abs(e.deltaY);
+      const now = Date.now();
+      if (acc.sum < 30 || now - acc.lastStepAt < 80) return;
+      acc.sum = 0; acc.lastStepAt = now;
+      setActiveIdx(i => Math.max(0, Math.min(candidates.length - 1, i + dir)));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [candidates.length, setActiveIdx]);
 
   // Teclado local em capture-phase: alterna candidatos da imagem atual sem
   // colidir com a navegação entre pontos (ArrowLeft/ArrowRight) tratada
@@ -71,7 +93,7 @@ const ZoomModal = ({ img, idx, onClose, group, setIdx }) => {
             </button>
           </div>
         </div>
-        <div className="modal-body" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} onWheel={onWheel} style={{ cursor: dragRef.current ? 'grabbing' : 'grab', position: 'relative' }}>
+        <div ref={bodyRef} className="modal-body" onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp} onMouseLeave={onMouseUp} style={{ cursor: dragRef.current ? 'grabbing' : 'grab', position: 'relative' }}>
           {hasMulti && (
             <div className="img-pager modal-pager">
               <button onClick={(e) => { e.stopPropagation(); setActiveIdx(i => Math.max(0, i - 1)); }} disabled={activeIdx === 0} title="Imagem anterior do mesmo ponto (↑ / Shift+←)">
@@ -110,8 +132,8 @@ const ZoomModal = ({ img, idx, onClose, group, setIdx }) => {
             {meta.OBSERVACAO && <span style={{ fontStyle: 'italic', color: 'var(--fg-3)' }}>{meta.OBSERVACAO}</span>}
           </span>
           <span className="mono" style={{ color: 'var(--fg-3)' }}>
-            {hasMulti && <>↑↓ alterna · </>}
-            arraste · roda do mouse · <span style={{ padding: '2px 6px', background: 'var(--bg-3)', borderRadius: 4 }}>Esc</span>
+            {hasMulti && <>↑↓ ou scroll alterna · </>}
+            ctrl+scroll zoom · arraste · <span style={{ padding: '2px 6px', background: 'var(--bg-3)', borderRadius: 4 }}>Esc</span>
           </span>
         </div>
       </div>
@@ -154,10 +176,38 @@ const CompareCell = ({ img, i }) => {
   const { src, loaded, failed, retryCount, onLoad, onError, manualRetry } = useImageWithRetry(resolvedSrc);
   const m = img.meta || {};
   const hasMulti = candidates.length > 1;
+  const wrapRef = React.useRef(null);
+  const activeIdxRef = React.useRef(activeIdx);
+  React.useEffect(() => { activeIdxRef.current = activeIdx; }, [activeIdx]);
+
+  // Scroll do mouse alterna entre as fotos do mesmo ponto na célula.
+  // Listener nativo pra poder preventDefault; libera nas bordas.
+  React.useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || candidates.length <= 1) return;
+    const acc = { sum: 0, dir: 0, lastStepAt: 0 };
+    const onWheel = (e) => {
+      const dir = e.deltaY > 0 ? 1 : -1;
+      const cur = activeIdxRef.current;
+      const atEdge = (dir > 0 && cur >= candidates.length - 1) || (dir < 0 && cur <= 0);
+      if (atEdge) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (dir !== acc.dir) { acc.sum = 0; acc.dir = dir; }
+      acc.sum += Math.abs(e.deltaY);
+      const now = Date.now();
+      if (acc.sum < 30 || now - acc.lastStepAt < 80) return;
+      acc.sum = 0; acc.lastStepAt = now;
+      setActiveIdx(i => Math.max(0, Math.min(candidates.length - 1, i + dir)));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [candidates.length, setActiveIdx]);
+
   return (
     <div className="compare-cell">
       <div className="label">Imagem #{i + 1}{m.ID ? ` · ${m.ID}` : ''}</div>
-      <div className="compare-img-wrap" style={{ position: 'relative' }}>
+      <div ref={wrapRef} className="compare-img-wrap" style={{ position: 'relative' }}>
         {state === 'loading' && <div style={{ color: 'var(--fg-3)' }}>Resolvendo imagem…</div>}
         {state === 'ready' && src && !failed && (
           <img className="real" src={src} alt={m.ID || ''} draggable={false}

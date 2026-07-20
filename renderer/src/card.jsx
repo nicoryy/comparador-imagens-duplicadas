@@ -63,6 +63,34 @@ const Card = React.memo(function Card({ img, idx, status, focused, comparePick, 
     return () => onRegisterImageNav(idx, null);
   }, [idx, onRegisterImageNav, setActiveIdx]);
 
+  // Scroll do mouse sobre o card alterna entre as fotos do mesmo ponto.
+  // Listener nativo com { passive: false } pra conseguir preventDefault
+  // (React anexa onWheel como passivo). Acumula deltaY até um limiar pra
+  // suavizar trackpads; nas bordas, deixa a página rolar normalmente.
+  const activeIdxRef = React.useRef(activeIdx);
+  React.useEffect(() => { activeIdxRef.current = activeIdx; }, [activeIdx]);
+  React.useEffect(() => {
+    const el = frameRef.current;
+    if (!el || candidates.length <= 1) return;
+    const acc = { sum: 0, dir: 0, lastStepAt: 0 };
+    const onWheel = (e) => {
+      const dir = e.deltaY > 0 ? 1 : -1;
+      const cur = activeIdxRef.current;
+      const atEdge = (dir > 0 && cur >= candidates.length - 1) || (dir < 0 && cur <= 0);
+      if (atEdge) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (dir !== acc.dir) { acc.sum = 0; acc.dir = dir; }
+      acc.sum += Math.abs(e.deltaY);
+      const now = Date.now();
+      if (acc.sum < 30 || now - acc.lastStepAt < 80) return;
+      acc.sum = 0; acc.lastStepAt = now;
+      setActiveIdx(i => Math.max(0, Math.min(candidates.length - 1, i + dir)));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [candidates.length, setActiveIdx]);
+
   return (
     <div className={cardClass} onClick={() => onFocus(idx)}>
       <div className="card-top">
