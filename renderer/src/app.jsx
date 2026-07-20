@@ -15,6 +15,9 @@ const App = () => {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState(null);
 
+  const [appVersion, setAppVersion] = useState(null);
+  useEffect(() => { window.electronAPI?.getVersion?.().then(setAppVersion); }, []);
+
   const [values, setTweak] = useTweaks(TWEAK_DEFAULTS);
   const { config: hotkeyConfig, setActionKeys: setHotkey, resetAction: resetHotkey, resetAll: resetHotkeysAll } = useHotkeyConfig();
   const [hotkeysModalOpen, setHotkeysModalOpen] = useState(false);
@@ -301,7 +304,7 @@ const App = () => {
 
   // ─── Render ────────────────────────────────────────────────────────────────
   if (!setupConfig) {
-    return <SetupWizard onComplete={(cfg) => setSetupConfig(cfg)} />;
+    return <SetupWizard onComplete={(cfg) => setSetupConfig(cfg)} appVersion={appVersion} />;
   }
 
   if (loading) {
@@ -351,6 +354,7 @@ const App = () => {
         allStatus={statusByGroup}
         completedGroups={completedGroups}
         fileInfo={setupConfig}
+        appVersion={appVersion}
         onOpenZoom={() => setZoomModal({ idx: focusIdx })}
         onReconfigure={() => setSetupConfig(null)}
       />

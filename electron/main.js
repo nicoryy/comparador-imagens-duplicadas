@@ -285,6 +285,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('app:platform', () => process.platform);
+  ipcMain.handle('app:version', () => app.getVersion());
 
   // Renderer informa estado de gravação a cada mudança em dirty/saving.
   ipcMain.on('app:setRenderState', (_e, state) => {

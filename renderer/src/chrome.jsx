@@ -1,6 +1,6 @@
 // Sidebar, header, footer (chrome do app).
 
-const Sidebar = ({ group, groupIdx, totalGroups, status, allStatus, completedGroups, fileInfo, onOpenZoom, onReconfigure }) => {
+const Sidebar = ({ group, groupIdx, totalGroups, status, allStatus, completedGroups, fileInfo, appVersion, onOpenZoom, onReconfigure }) => {
   const groupSize = group?.images?.length || 0;
   const counts = {
     keep: Object.values(status).filter(s => s === 'keep').length,
@@ -138,7 +138,7 @@ const Sidebar = ({ group, groupIdx, totalGroups, status, allStatus, completedGro
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 9V3h6M21 9V3h-6M3 15v6h6M21 15v6h-6"/></svg>
           </span>
         </button>
-        <div className="sb-foot-status">v1.0.0 · Electron build</div>
+        <div className="sb-foot-status">{appVersion ? `v${appVersion}` : '…'} · Electron build</div>
       </div>
     </aside>
   );

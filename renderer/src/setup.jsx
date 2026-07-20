@@ -3,7 +3,7 @@
 
 const { useState: useSetupState, useEffect: useSetupEffect, useRef: useSetupRef } = React;
 
-const SetupWizard = ({ onComplete, initialError }) => {
+const SetupWizard = ({ onComplete, initialError, appVersion }) => {
   const [step, setStep] = useSetupState(1);
   const [file, setFile] = useSetupState(null);                 // { path, name, size, modified }
   const [sheets, setSheets] = useSetupState([]);
@@ -123,6 +123,7 @@ const SetupWizard = ({ onComplete, initialError }) => {
             <h1>Configurar auditoria</h1>
             <div className="subtitle">Conecte sua planilha, escolha a folha e mapeie as colunas para começar.</div>
           </div>
+          {appVersion && <div className="setup-version mono">v{appVersion}</div>}
         </div>
 
         <div className="setup-stepper">
