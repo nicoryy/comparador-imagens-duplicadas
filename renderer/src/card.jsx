@@ -1,8 +1,10 @@
 // Cartão de imagem no grid de comparação (imagem real, dados reais).
 
-const Card = React.memo(function Card({ img, idx, status, focused, comparePick, onSetStatus, onFocus, onZoom, onMenu, menuOpen, onMenuAction, mapping, onRegisterImageNav }) {
+const Card = React.memo(function Card({ img, idx, status, focused, comparePick, onSetStatus, onFocus, onZoom, onMenu, menuOpen, onMenuAction, mapping, onRegisterImageNav, hotkeyConfig }) {
   const isKeep = status === 'keep';
   const isDup = status === 'dup';
+  const keepKey = prettyKeyString(hotkeyConfig?.['mark-keep']?.keys?.[0]);
+  const dupKey = prettyKeyString(hotkeyConfig?.['mark-dup']?.keys?.[0]);
   const chipRef = React.useRef(null);
   const [chipRect, setChipRect] = React.useState(null);
 
@@ -170,21 +172,21 @@ const Card = React.memo(function Card({ img, idx, status, focused, comparePick, 
         {!isKeep && !isDup && (
           <>
             <button className="card-action keep half" onClick={(e) => { e.stopPropagation(); onSetStatus(idx, 'keep'); }}>
-              <span>Manter</span><span className="kbd mono">M</span>
+              <span>Manter</span><span className="kbd mono">{keepKey}</span>
             </button>
             <button className="card-action dup half" onClick={(e) => { e.stopPropagation(); onSetStatus(idx, 'dup'); }}>
-              <span>Duplicada</span><span className="kbd mono">D</span>
+              <span>Duplicada</span><span className="kbd mono">{dupKey}</span>
             </button>
           </>
         )}
         {isKeep && (
           <button className="card-action keep" onClick={(e) => { e.stopPropagation(); onSetStatus(idx, null); }}>
-            <span>Mantida ✓</span><span className="kbd mono">M</span>
+            <span>Mantida ✓</span><span className="kbd mono">{keepKey}</span>
           </button>
         )}
         {isDup && (
           <button className="card-action dup" onClick={(e) => { e.stopPropagation(); onSetStatus(idx, null); }}>
-            <span>Duplicada ✕</span><span className="kbd mono">D</span>
+            <span>Duplicada ✕</span><span className="kbd mono">{dupKey}</span>
           </button>
         )}
         <button className="card-menu" onClick={(e) => { e.stopPropagation(); onMenu(idx); }} title="Mais ações">

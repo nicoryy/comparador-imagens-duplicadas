@@ -1,6 +1,7 @@
 // Sidebar, header, footer (chrome do app).
 
-const Sidebar = ({ group, groupIdx, totalGroups, status, allStatus, completedGroups, fileInfo, appVersion, onOpenZoom, onReconfigure }) => {
+const Sidebar = ({ group, groupIdx, totalGroups, status, allStatus, completedGroups, fileInfo, appVersion, hotkeyConfig, onOpenZoom, onReconfigure }) => {
+  const hk = (action) => prettyKeyString(hotkeyConfig?.[action]?.keys?.[0]);
   const groupSize = group?.images?.length || 0;
   const counts = {
     keep: Object.values(status).filter(s => s === 'keep').length,
@@ -118,15 +119,15 @@ const Sidebar = ({ group, groupIdx, totalGroups, status, allStatus, completedGro
         <div className="sb-block">
           <div className="sb-label"><span className="sb-label-dot"></span> Atalhos de teclado</div>
           <div className="hotkeys">
-            <div className="hotkey keep"><span className="kbd">M</span><span>Manter imagem</span></div>
-            <div className="hotkey dup"><span className="kbd">D</span><span>Marcar duplicada</span></div>
-            <div className="hotkey"><span className="kbd">N</span><span>Próximo grupo</span></div>
-            <div className="hotkey"><span className="kbd">P</span><span>Grupo anterior</span></div>
+            <div className="hotkey keep"><span className="kbd">{hk('mark-keep')}</span><span>Manter imagem</span></div>
+            <div className="hotkey dup"><span className="kbd">{hk('mark-dup')}</span><span>Marcar duplicada</span></div>
+            <div className="hotkey"><span className="kbd">{hk('next-group')}</span><span>Próximo grupo</span></div>
+            <div className="hotkey"><span className="kbd">{hk('prev-group')}</span><span>Grupo anterior</span></div>
             <div className="hotkey"><span className="kbd">1–9</span><span>Selecionar imagem</span></div>
-            <div className="hotkey"><span className="kbd">Z</span><span>Abrir zoom</span></div>
-            <div className="hotkey"><span className="kbd">C</span><span>Comparar lado a lado</span></div>
-            <div className="hotkey"><span className="kbd">⏎</span><span>Concluir grupo</span></div>
-            <div className="hotkey"><span className="kbd">⌘S</span><span>Salvar planilha</span></div>
+            <div className="hotkey"><span className="kbd">{hk('zoom')}</span><span>Abrir zoom</span></div>
+            <div className="hotkey"><span className="kbd">{hk('compare')}</span><span>Comparar lado a lado</span></div>
+            <div className="hotkey"><span className="kbd">{hk('complete-group')}</span><span>Concluir grupo</span></div>
+            <div className="hotkey"><span className="kbd">{hk('save-now')}</span><span>Salvar planilha</span></div>
           </div>
         </div>
       </div>
@@ -144,7 +145,7 @@ const Sidebar = ({ group, groupIdx, totalGroups, status, allStatus, completedGro
   );
 };
 
-const Header = ({ groupIdx, totalGroups, group, onPrev, onNext, onComplete, viewMode, setViewMode, allClassified, completed, dirty, onSave, saving }) => (
+const Header = ({ groupIdx, totalGroups, group, onPrev, onNext, onComplete, viewMode, setViewMode, allClassified, completed, dirty, onSave, saving, hotkeyConfig }) => (
   <header className="header">
     <div className="hdr-left">
       <div className="crumb">
@@ -154,14 +155,14 @@ const Header = ({ groupIdx, totalGroups, group, onPrev, onNext, onComplete, view
       </div>
     </div>
     <div className="group-nav">
-      <button className="nav-btn" onClick={onPrev} disabled={groupIdx === 0} title="Grupo anterior (P)">
+      <button className="nav-btn" onClick={onPrev} disabled={groupIdx === 0} title={`Grupo anterior (${prettyKeyString(hotkeyConfig?.['prev-group']?.keys?.[0])})`}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
       </button>
       <div className="group-indicator">
         <div className="gnum">Grupo {groupIdx + 1} <span className="of">de {totalGroups}</span></div>
         <div className="gmeta">{group?.images?.length || 0} imagens · ID <span className="mono">{group?.id}</span></div>
       </div>
-      <button className="nav-btn" onClick={onNext} disabled={groupIdx === totalGroups - 1} title="Próximo grupo (N)">
+      <button className="nav-btn" onClick={onNext} disabled={groupIdx === totalGroups - 1} title={`Próximo grupo (${prettyKeyString(hotkeyConfig?.['next-group']?.keys?.[0])})`}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
       </button>
     </div>
@@ -174,7 +175,7 @@ const Header = ({ groupIdx, totalGroups, group, onPrev, onNext, onComplete, view
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
       </div>
-      <button className="btn" onClick={onSave} disabled={!dirty || saving} title="Salvar agora (Ctrl+S)">
+      <button className="btn" onClick={onSave} disabled={!dirty || saving} title={`Salvar agora (${prettyKeyString(hotkeyConfig?.['save-now']?.keys?.[0])})`}>
         {saving ? (
           <>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" opacity="0.3"/><path d="M12 2 a 10 10 0 0 1 10 10"/></svg>
@@ -195,7 +196,7 @@ const Header = ({ groupIdx, totalGroups, group, onPrev, onNext, onComplete, view
   </header>
 );
 
-const Footer = ({ zoom, setZoom, onPrev, onNext, groupIdx, totalGroups }) => (
+const Footer = ({ zoom, setZoom, onPrev, onNext, groupIdx, totalGroups, hotkeyConfig }) => (
   <footer className="footer">
     <div className="zoom-cluster">
       <button className="zoom-btn" onClick={() => setZoom(Math.max(50, zoom - 10))} title="Diminuir zoom">
@@ -216,10 +217,10 @@ const Footer = ({ zoom, setZoom, onPrev, onNext, groupIdx, totalGroups }) => (
     <div className="fast-nav">
       <button className="btn" onClick={onPrev} disabled={groupIdx === 0}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="15 18 9 12 15 6"/></svg>
-        Grupo anterior <span className="kbd mono" style={{ fontSize: 10, padding: '1px 5px', background: 'oklch(0 0 0 / 0.4)', borderRadius: 3 }}>P</span>
+        Grupo anterior <span className="kbd mono" style={{ fontSize: 10, padding: '1px 5px', background: 'oklch(0 0 0 / 0.4)', borderRadius: 3 }}>{prettyKeyString(hotkeyConfig?.['prev-group']?.keys?.[0])}</span>
       </button>
       <button className="btn btn-primary" onClick={onNext} disabled={groupIdx === totalGroups - 1}>
-        Próximo grupo <span className="kbd mono" style={{ fontSize: 10, padding: '1px 5px', background: 'oklch(0 0 0 / 0.3)', borderRadius: 3, color: 'oklch(0.2 0.05 145)' }}>N</span>
+        Próximo grupo <span className="kbd mono" style={{ fontSize: 10, padding: '1px 5px', background: 'oklch(0 0 0 / 0.3)', borderRadius: 3, color: 'oklch(0.2 0.05 145)' }}>{prettyKeyString(hotkeyConfig?.['next-group']?.keys?.[0])}</span>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 18 15 12 9 6"/></svg>
       </button>
     </div>

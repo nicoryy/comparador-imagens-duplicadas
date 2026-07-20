@@ -355,6 +355,7 @@ const App = () => {
         completedGroups={completedGroups}
         fileInfo={setupConfig}
         appVersion={appVersion}
+        hotkeyConfig={hotkeyConfig}
         onOpenZoom={() => setZoomModal({ idx: focusIdx })}
         onReconfigure={() => setSetupConfig(null)}
       />
@@ -372,6 +373,7 @@ const App = () => {
         dirty={dirty}
         onSave={saveNow}
         saving={saving}
+        hotkeyConfig={hotkeyConfig}
       />
       <main className="main">
         <div className="batch-bar">
@@ -424,6 +426,7 @@ const App = () => {
                 onMenuAction={handleMenuAction}
                 mapping={setupConfig.mapping}
                 onRegisterImageNav={registerCardImageNav}
+                hotkeyConfig={hotkeyConfig}
               />
             ))}
           </div>
@@ -436,6 +439,7 @@ const App = () => {
         onNext={goNext}
         groupIdx={groupIdx}
         totalGroups={totalGroups}
+        hotkeyConfig={hotkeyConfig}
       />
 
       {compareMode && compareMode.secondIdx == null && (
