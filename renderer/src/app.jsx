@@ -73,7 +73,13 @@ const App = () => {
           if (Object.keys(s).length) seed[gi] = s;
         });
         setStatusByGroup(seed);
-        setCompletedGroups({});
+        // grupos já totalmente classificados na planilha (sessão anterior) entram como concluídos
+        const seedDone = {};
+        result.groups.forEach((g, gi) => {
+          const s = seed[gi] || {};
+          if (g.images.length && Object.keys(s).length === g.images.length) seedDone[gi] = true;
+        });
+        setCompletedGroups(seedDone);
         setGroupIdx(0); setFocusIdx(0);
       } catch (e) {
         if (!cancelled) setLoadError(e.message || String(e));
@@ -96,7 +102,6 @@ const App = () => {
     return { keep: k, dup: d, pend: Math.max(0, groupSize - k - d) };
   }, [status, groupSize]);
 
-  const allClassified = groupSize > 0 && counts.pend === 0;
   const completed = !!completedGroups[groupIdx];
   const dirty = Object.keys(dirtyRows).length > 0;
 
@@ -136,17 +141,6 @@ const App = () => {
     setDirtyRows(prev => ({ ...prev, ...updates }));
   }, [group, groupIdx]);
 
-  const goPrev = useCallback(() => { setGroupIdx(i => Math.max(0, i - 1)); setFocusIdx(0); }, []);
-  const goNext = useCallback(() => { setGroupIdx(i => Math.min(totalGroups - 1, i + 1)); setFocusIdx(0); }, [totalGroups]);
-
-  const completeGroup = useCallback(() => {
-    setCompletedGroups(prev => ({ ...prev, [groupIdx]: true }));
-    saveNow(); // força gravação ao concluir
-    setTimeout(() => {
-      if (groupIdx < totalGroups - 1) goNext();
-    }, 200);
-  }, [groupIdx, goNext, totalGroups]);
-
   // ─── Salvamento ────────────────────────────────────────────────────────────
   // Retorna `true` em sucesso (ou se não havia nada a gravar), `false` em erro.
   // O retorno é usado no fluxo "Salvar e fechar" para decidir se a janela pode fechar.
@@ -184,6 +178,55 @@ const App = () => {
       setSaving(false);
     }
   }, [setupConfig]);
+
+  // ─── Navegação entre grupos ────────────────────────────────────────────────
+  // Navegação pura — não conclui nem preenche nada. Usada por "voltar" sempre,
+  // e internamente por goNext/completeGroup após a finalização já ter rodado.
+  const navPrev = useCallback(() => { setGroupIdx(i => Math.max(0, i - 1)); setFocusIdx(0); }, []);
+  const navNext = useCallback(() => { setGroupIdx(i => Math.min(totalGroups - 1, i + 1)); setFocusIdx(0); }, [totalGroups]);
+  const goPrev = navPrev;
+
+  // Fecha o grupo `gi`: pendentes viram 'keep' e o grupo é marcado como concluído.
+  const finalizeGroup = useCallback((gi) => {
+    const g = groups[gi];
+    if (!g) return;
+    const cur = statusByGroup[gi] || {};
+    const nextStatus = { ...cur };
+    const updates = {};
+    g.images.forEach((img, i) => {
+      if (nextStatus[i] !== 'keep' && nextStatus[i] !== 'dup') {
+        nextStatus[i] = 'keep';
+        updates[img.rowNumber] = 'keep';
+      }
+    });
+    if (Object.keys(updates).length) {
+      setStatusByGroup(prev => ({ ...prev, [gi]: nextStatus }));
+      // Atualiza a ref de forma síncrona: saveNow() lê dirtyRef.current, que só
+      // seria sincronizado no próximo render pelo effect que espelha dirtyRows -> dirtyRef.
+      dirtyRef.current = { ...dirtyRef.current, ...updates };
+      setDirtyRows(prev => ({ ...prev, ...updates }));
+    }
+    setCompletedGroups(prev => prev[gi] ? prev : { ...prev, [gi]: true });
+  }, [groups, statusByGroup]);
+
+  // Avançar: se o grupo atual tem alguma marcação e ainda não foi concluído,
+  // finaliza (pendentes -> manter) antes de navegar. Grupo intocado só navega.
+  const goNext = useCallback(() => {
+    const hasMarks = Object.values(statusByGroup[groupIdx] || {}).some(v => v === 'keep' || v === 'dup');
+    if (hasMarks && !completedGroups[groupIdx]) {
+      finalizeGroup(groupIdx);
+      saveNow();
+    }
+    navNext();
+  }, [groupIdx, statusByGroup, completedGroups, finalizeGroup, saveNow, navNext]);
+
+  const completeGroup = useCallback(() => {
+    finalizeGroup(groupIdx);
+    saveNow(); // força gravação ao concluir
+    setTimeout(() => {
+      if (groupIdx < totalGroups - 1) navNext();
+    }, 200);
+  }, [groupIdx, finalizeGroup, saveNow, navNext, totalGroups]);
 
   // Reporta estado de gravação ao processo main (usado pra bloquear fechamento).
   useEffect(() => {
@@ -263,7 +306,7 @@ const App = () => {
         case 'compare':        e.preventDefault(); setCompareMode({ firstIdx: focusIdx }); break;
         case 'save-now':       e.preventDefault(); saveNow(); break;
         case 'complete-group':
-          if (allClassified && !completed) { e.preventDefault(); completeGroup(); }
+          if (!completed) { e.preventDefault(); completeGroup(); }
           break;
         case 'nav-image-prev':
           e.preventDefault();
@@ -286,7 +329,7 @@ const App = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [focusIdx, status, setStatus, goNext, goPrev, zoomModal, compareMode, groupSize, values.cols, allClassified, completed, completeGroup, saveNow, hotkeyConfig]);
+  }, [focusIdx, status, setStatus, goNext, goPrev, zoomModal, compareMode, groupSize, values.cols, completed, completeGroup, saveNow, hotkeyConfig]);
 
   // Fecha menu de card ao clicar fora
   const onMenu = (idx) => setMenuOpenIdx(prev => prev === idx ? null : idx);
@@ -368,7 +411,6 @@ const App = () => {
         onComplete={completeGroup}
         viewMode={viewMode}
         setViewMode={setViewMode}
-        allClassified={allClassified}
         completed={completed}
         dirty={dirty}
         onSave={saveNow}

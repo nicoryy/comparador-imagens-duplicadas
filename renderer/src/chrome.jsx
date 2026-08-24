@@ -109,10 +109,10 @@ const Sidebar = ({ group, groupIdx, totalGroups, status, allStatus, completedGro
         <div className="sb-block">
           <div className="sb-label"><span className="sb-label-dot"></span> Como usar</div>
           <ol className="steps">
-            <li><span className="n">1</span><span>Marque cada imagem como <b style={{ color: 'var(--keep)' }}>manter</b> ou <b style={{ color: 'var(--dup)' }}>duplicada</b>. Várias podem ser mantidas.</span></li>
+            <li><span className="n">1</span><span>Marque apenas as <b style={{ color: 'var(--dup)' }}>duplicadas</b>. Só marque <b style={{ color: 'var(--keep)' }}>manter</b> se quiser garantir uma imagem específica.</span></li>
             <li><span className="n">2</span><span>Use o tooltip de <b>ID/Circuito/Data/Obs.</b> para apoiar a decisão.</span></li>
             <li><span className="n">3</span><span>Use o zoom para inspecionar detalhes finos.</span></li>
-            <li><span className="n">4</span><span>Conclua o grupo e avance — gravação automática na planilha.</span></li>
+            <li><span className="n">4</span><span>Avance pro próximo grupo — o restante vira <b style={{ color: 'var(--keep)' }}>manter</b> automaticamente e o grupo é concluído.</span></li>
           </ol>
         </div>
 
@@ -145,7 +145,7 @@ const Sidebar = ({ group, groupIdx, totalGroups, status, allStatus, completedGro
   );
 };
 
-const Header = ({ groupIdx, totalGroups, group, onPrev, onNext, onComplete, viewMode, setViewMode, allClassified, completed, dirty, onSave, saving, hotkeyConfig }) => (
+const Header = ({ groupIdx, totalGroups, group, onPrev, onNext, onComplete, viewMode, setViewMode, completed, dirty, onSave, saving, hotkeyConfig }) => (
   <header className="header">
     <div className="hdr-left">
       <div className="crumb">
@@ -188,7 +188,7 @@ const Header = ({ groupIdx, totalGroups, group, onPrev, onNext, onComplete, view
           </>
         )}
       </button>
-      <button className="btn btn-primary" onClick={onComplete} disabled={!allClassified || completed}>
+      <button className="btn btn-primary" onClick={onComplete} disabled={completed} title={completed ? undefined : 'Marca as pendentes como manter e conclui o grupo'}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12"/></svg>
         {completed ? 'Grupo concluído' : 'Concluir grupo'}
       </button>
