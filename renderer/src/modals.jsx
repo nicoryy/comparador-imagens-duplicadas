@@ -141,6 +141,163 @@ const ZoomModal = ({ img, idx, onClose, group, setIdx }) => {
   );
 };
 
+// Modal de metadados: mostra dados da planilha + os embutidos no nome/caminho
+// do arquivo (padrão SIP Satel/SINAPI — ver renderer/src/image-meta.js),
+// com atalhos para copiar as coordenadas e abrir o mapa no navegador do
+// sistema. Não reaproveita o visual da extensão de referência — só a lógica
+// de extração/conversão, aqui expressa 100% com as classes do comparador.
+const MetaModal = ({ img, idx, group, initialImageIdx, mapping, onClose }) => {
+  const { src: resolvedSrc, state: srcState, candidates, activeIdx, setActiveIdx } = useResolvedImageSrc(img);
+  const { src, loaded, failed, onLoad, onError, manualRetry } = useImageWithRetry(resolvedSrc);
+
+  // Abre na mesma foto que o card estava exibindo (uma única vez, quando os
+  // candidatos da galeria remota terminarem de resolver).
+  const seededRef = React.useRef(false);
+  React.useEffect(() => {
+    if (seededRef.current || initialImageIdx == null || candidates.length <= 1) return;
+    seededRef.current = true;
+    setActiveIdx(Math.max(0, Math.min(candidates.length - 1, initialImageIdx)));
+  }, [candidates.length, initialImageIdx, setActiveIdx]);
+
+  const meta = img.meta || {};
+  const total = group?.images?.length || 0;
+  const hasMulti = candidates.length > 1;
+
+  const source = React.useMemo(() => metaSourceFor(img, candidates, activeIdx), [img, candidates, activeIdx]);
+  const fileMeta = React.useMemo(() => parseImageMeta(source), [source]);
+  const coords = hasImageCoords(fileMeta);
+
+  const [copyLabel, setCopyLabel] = React.useState(null);
+  const copyTimerRef = React.useRef(null);
+  const handleCopy = async () => {
+    const ok = await copyText(formatLatLon(fileMeta));
+    setCopyLabel(ok ? 'Copiado ✓' : 'Falhou');
+    clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopyLabel(null), 1400);
+  };
+  React.useEffect(() => () => clearTimeout(copyTimerRef.current), []);
+  const handleOpenMap = () => {
+    const url = mapsUrlFor(fileMeta);
+    if (url) window.electronAPI.openExternal(url);
+  };
+
+  const sheetRows = [];
+  if (mapping?.id)         sheetRows.push({ k: 'ID', v: meta.ID || '—' });
+  if (mapping?.circuito)   sheetRows.push({ k: 'Circuito', v: meta.CIRCUITO || '—' });
+  if (mapping?.data)       sheetRows.push({ k: 'Data', v: formatDate(meta.DATA) });
+  if (mapping?.observacao) sheetRows.push({ k: 'Observação', v: meta.OBSERVACAO || '—', obs: true });
+
+  const fileRows = [];
+  if (fileMeta.usuario)     fileRows.push({ k: 'Técnico', v: fileMeta.usuario });
+  if (fileMeta.posId)       fileRows.push({ k: 'POS_ID', v: fileMeta.posId });
+  if (fileMeta.nomePonto)   fileRows.push({ k: 'Ponto', v: fileMeta.nomePonto });
+  if (fileMeta.dataUpload)  fileRows.push({ k: 'Upload', v: formatDateYYYYMMDD(fileMeta.dataUpload) });
+  if (fileMeta.dataCaptura) fileRows.push({ k: 'Captura', v: fileMeta.dataCaptura });
+  if (fileMeta.arquivo)     fileRows.push({ k: 'Arquivo', v: fileMeta.arquivo });
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" style={{ width: 'min(720px, 92vw)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            Metadados · Imagem <span className="mono" style={{ color: 'var(--fg-2)' }}>#{idx + 1} de {total}</span>
+            {meta.ID && (
+              <span style={{ marginLeft: 4, fontSize: 11, padding: '2px 8px', borderRadius: 999, background: 'var(--bg-3)', color: 'var(--fg-2)', fontWeight: 500 }} className="mono">
+                {meta.ID}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {hasMulti && (
+              <>
+                <button className="btn" onClick={() => setActiveIdx(i => Math.max(0, i - 1))} disabled={activeIdx === 0} title="Foto anterior deste ponto">‹</button>
+                <span className="zoom-pct mono">{activeIdx + 1}/{candidates.length}</span>
+                <button className="btn" onClick={() => setActiveIdx(i => Math.min(candidates.length - 1, i + 1))} disabled={activeIdx === candidates.length - 1} title="Próxima foto deste ponto">›</button>
+              </>
+            )}
+            <button className="modal-close" onClick={onClose}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+        <div className="modal-body meta-body">
+          <div className="meta-modal-grid">
+            <div className="meta-thumb">
+              {srcState === 'ready' && src && !failed && (
+                <img src={src} alt={meta.ID || ''} onLoad={onLoad} onError={onError} style={{ visibility: loaded ? 'visible' : 'hidden' }} />
+              )}
+              {(srcState === 'loading' || (srcState === 'ready' && !loaded && !failed)) && <div className="img-skeleton"></div>}
+              {(srcState === 'error' || failed) && (
+                <div className="img-error">
+                  <div>
+                    <div>Imagem não disponível</div>
+                    <button className="link-btn" style={{ marginTop: 6 }} onClick={(e) => { e.stopPropagation(); manualRetry(); }}>Tentar novamente</button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="meta-sections">
+              {sheetRows.length > 0 && (
+                <div className="meta-section">
+                  <div className="sb-label"><span className="sb-label-dot"></span>Planilha</div>
+                  {sheetRows.map((r, i) => (
+                    <div className="meta-row" key={i}>
+                      <span className="k">{r.k}</span>
+                      <span className={r.obs ? 'v obs' : 'v mono'}>{r.v}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="meta-section">
+                <div className="sb-label"><span className="sb-label-dot"></span>Arquivo</div>
+                {fileRows.length > 0 ? fileRows.map((r, i) => (
+                  <div className="meta-row" key={i}>
+                    <span className="k">{r.k}</span>
+                    <span className="v mono">{r.v}</span>
+                  </div>
+                )) : (
+                  <div className="meta-row"><span className="k">Origem</span><span className="v mono">{source || '—'}</span></div>
+                )}
+              </div>
+              <div className="meta-section">
+                <div className="sb-label"><span className="sb-label-dot"></span>Localização</div>
+                {coords ? (
+                  <>
+                    <div className="meta-row"><span className="k">UTM</span><span className="v mono">{fileMeta.utmZone}S · E {fileMeta.utmE} / N {fileMeta.utmN}</span></div>
+                    <div className="meta-row"><span className="k">Lat / Long</span><span className="v mono">{formatLatLon(fileMeta)}</span></div>
+                  </>
+                ) : (
+                  <div className="meta-warn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                    Sem coordenadas UTM no nome do arquivo
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="modal-foot">
+          <div className="meta-actions">
+            <button className="btn" onClick={handleCopy} disabled={!coords}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, verticalAlign: '-2px' }}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              {copyLabel || 'Copiar coordenadas'}
+            </button>
+            <button className="btn" onClick={handleOpenMap} disabled={!coords}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, verticalAlign: '-2px' }}><path d="M1 6v16l7-4 8 4 7-4V2l-7 4-8-4-7 4z"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+              Abrir no mapa
+            </button>
+          </div>
+          <span className="mono" style={{ color: 'var(--fg-3)' }}>
+            {hasMulti && <>‹ › troca a foto · </>}
+            <span style={{ padding: '2px 6px', background: 'var(--bg-3)', borderRadius: 4 }}>Esc</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const CompareModal = ({ a, b, ai, bi, onClose }) => {
   const items = [{ img: a, i: ai }, { img: b, i: bi }];
   return (
@@ -263,5 +420,6 @@ const ComparePicker = ({ onCancel }) => (
 function clamp(n, min, max) { return Math.min(max, Math.max(min, n)); }
 
 window.ZoomModal = ZoomModal;
+window.MetaModal = MetaModal;
 window.CompareModal = CompareModal;
 window.ComparePicker = ComparePicker;

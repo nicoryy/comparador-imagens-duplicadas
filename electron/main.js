@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, ipcMain, dialog, protocol, net, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, protocol, net, session, shell, clipboard } = require('electron');
 const path = require('node:path');
 const { Worker } = require('node:worker_threads');
 const { pathToFileURL } = require('node:url');
@@ -286,6 +286,27 @@ function registerIpcHandlers() {
 
   ipcMain.handle('app:platform', () => process.platform);
   ipcMain.handle('app:version', () => app.getVersion());
+
+  // Abre uma URL no navegador padrão do sistema (usado pelo botão "Abrir no
+  // mapa" do modal de metadados). Restrito a http(s) — nunca abrir file:/
+  // outros esquemas a partir de dado externo.
+  ipcMain.handle('shell:openExternal', async (_e, url) => {
+    try {
+      const parsed = new URL(String(url));
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return { ok: false, error: 'Protocolo não permitido' };
+      }
+      await shell.openExternal(parsed.href);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('clipboard:writeText', (_e, text) => {
+    clipboard.writeText(String(text || ''));
+    return { ok: true };
+  });
 
   // Renderer informa estado de gravação a cada mudança em dirty/saving.
   ipcMain.on('app:setRenderState', (_e, state) => {

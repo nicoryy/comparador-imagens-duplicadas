@@ -204,7 +204,7 @@ const Card = React.memo(function Card({ img, idx, status, focused, comparePick, 
             <span className="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="8" height="18"/><rect x="13" y="3" width="8" height="18"/></svg></span>
             Comparar lado a lado
           </button>
-          <button onClick={() => { onMenuAction('meta', idx); onMenu(null); }}>
+          <button onClick={() => { onMenuAction('meta', idx, activeIdx); onMenu(null); }}>
             <span className="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
             Ver metadados
           </button>

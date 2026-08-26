@@ -36,6 +36,7 @@ const App = () => {
   const [viewMode, setViewMode] = useState('grid');
   const [menuOpenIdx, setMenuOpenIdx] = useState(null);
   const [zoomModal, setZoomModal] = useState(null);
+  const [metaModal, setMetaModal] = useState(null);
   const [compareMode, setCompareMode] = useState(null);
 
   // Persistência
@@ -253,8 +254,9 @@ const App = () => {
   }, [dirtyRows, values.autoSave, saveNow, saving]);
 
   // ─── Menu / compare flow ───────────────────────────────────────────────────
-  const handleMenuAction = useCallback((action, idx) => {
-    if (action === 'zoom' || action === 'meta') setZoomModal({ idx });
+  const handleMenuAction = useCallback((action, idx, imageIdx) => {
+    if (action === 'zoom') setZoomModal({ idx });
+    else if (action === 'meta') setMetaModal({ idx, imageIdx });
     else if (action === 'compare') setCompareMode({ firstIdx: idx });
     else if (action === 'reveal' && group) {
       const img = group.images[idx];
@@ -288,6 +290,10 @@ const App = () => {
         if (action === 'close-modal') { e.preventDefault(); setZoomModal(null); return; }
         if (action === 'nav-image-prev') { e.preventDefault(); setZoomModal(z => z && z.idx > 0 ? { idx: z.idx - 1 } : z); return; }
         if (action === 'nav-image-next') { e.preventDefault(); setZoomModal(z => z && z.idx < groupSize - 1 ? { idx: z.idx + 1 } : z); return; }
+        return;
+      }
+      if (metaModal) {
+        if (action === 'close-modal') { e.preventDefault(); setMetaModal(null); }
         return;
       }
       if (compareMode && action === 'close-modal') { e.preventDefault(); setCompareMode(null); return; }
@@ -329,7 +335,7 @@ const App = () => {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [focusIdx, status, setStatus, goNext, goPrev, zoomModal, compareMode, groupSize, values.cols, completed, completeGroup, saveNow, hotkeyConfig]);
+  }, [focusIdx, status, setStatus, goNext, goPrev, zoomModal, metaModal, compareMode, groupSize, values.cols, completed, completeGroup, saveNow, hotkeyConfig]);
 
   // Fecha menu de card ao clicar fora
   const onMenu = (idx) => setMenuOpenIdx(prev => prev === idx ? null : idx);
@@ -497,6 +503,16 @@ const App = () => {
           group={group}
           setIdx={(i) => setZoomModal({ idx: i })}
           onClose={() => setZoomModal(null)}
+        />
+      )}
+      {metaModal && group.images[metaModal.idx] && (
+        <MetaModal
+          img={group.images[metaModal.idx]}
+          idx={metaModal.idx}
+          group={group}
+          initialImageIdx={metaModal.imageIdx}
+          mapping={setupConfig.mapping}
+          onClose={() => setMetaModal(null)}
         />
       )}
 

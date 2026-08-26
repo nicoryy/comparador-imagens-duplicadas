@@ -6,6 +6,7 @@ out/
 .env
 .env.local
 _design-reference/
+dump/
 .cache/
 
 # Gerado pelo postinstall (scripts/copy-vendor.js)
