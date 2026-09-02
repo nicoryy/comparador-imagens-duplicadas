@@ -1,9 +1,10 @@
 {
   "name": "comparador-imagens-duplicadas",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Comparador de Imagens Duplicadas — auditoria manual de prints com leitura/escrita massiva em planilhas xlsx/xlsm",
   "main": "electron/main.js",
-  "author": "Nicory",
+  "author": { "name": "Pedro Nicory", "url": "https://nicoryy.com" },
+  "homepage": "https://nicoryy.com",
   "license": "UNLICENSED",
   "private": true,
   "scripts": {
@@ -29,6 +30,7 @@
   "build": {
     "appId": "br.com.nicory.comparador-duplicadas",
     "productName": "Comparador de Duplicadas",
+    "copyright": "Copyright © 2026 Pedro Nicory — https://nicoryy.com",
     "files": [
       "electron/**/*",
       "renderer/**/*",
@@ -38,7 +40,10 @@
       "output": "dist"
     },
     "win": {
-      "target": ["nsis", "portable"]
+      "target": ["nsis", "portable"],
+      "publisherName": "Pedro Nicory",
+      "certificateSubjectName": "Pedro Nicory",
+      "signingHashAlgorithms": ["sha256"]
     },
     "mac": {
       "target": ["dmg"]
