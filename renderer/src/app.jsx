@@ -62,11 +62,14 @@ const App = () => {
           mapping: setupConfig.mapping,
         });
         if (cancelled) return;
-        setGroupsData(result);
-        window.GROUPS_DATA = result.groups;
+        // Pendentes primeiro, concluídos (sessão anterior) jogados pro fim —
+        // evita ter que navegar por cima de grupos já resolvidos.
+        const ordered = { ...result, groups: window.orderPendingFirst(result.groups) };
+        setGroupsData(ordered);
+        window.GROUPS_DATA = ordered.groups;
         // pré-povoar status com initialStatus salvo na planilha
         const seed = {};
-        result.groups.forEach((g, gi) => {
+        ordered.groups.forEach((g, gi) => {
           const s = {};
           g.images.forEach((img, ii) => {
             if (img.initialStatus) s[ii] = img.initialStatus;
@@ -76,9 +79,8 @@ const App = () => {
         setStatusByGroup(seed);
         // grupos já totalmente classificados na planilha (sessão anterior) entram como concluídos
         const seedDone = {};
-        result.groups.forEach((g, gi) => {
-          const s = seed[gi] || {};
-          if (g.images.length && Object.keys(s).length === g.images.length) seedDone[gi] = true;
+        ordered.groups.forEach((g, gi) => {
+          if (window.isGroupPreCompleted(g)) seedDone[gi] = true;
         });
         setCompletedGroups(seedDone);
         setGroupIdx(0); setFocusIdx(0);

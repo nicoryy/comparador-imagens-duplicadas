@@ -96,6 +96,20 @@ function formatTime(d) {
   return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
+// Um grupo chega "concluído" da planilha quando toda imagem já tem marcação gravada.
+function isGroupPreCompleted(g) {
+  return !!(g && g.images && g.images.length && g.images.every(img => img.initialStatus));
+}
+
+// Pendentes primeiro, concluídos no fim. Partição estável: dentro de cada bloco a
+// ordem natural por ID vinda do worker é preservada.
+function orderPendingFirst(groups) {
+  if (!Array.isArray(groups)) return [];
+  const pending = [], done = [];
+  for (const g of groups) (isGroupPreCompleted(g) ? done : pending).push(g);
+  return pending.concat(done);
+}
+
 window.REQUIRED_COLS = REQUIRED_COLS;
 window.loadRecents = loadRecents;
 window.pushRecent = pushRecent;
@@ -106,3 +120,5 @@ window.formatRelative = formatRelative;
 window.formatDate = formatDate;
 window.formatTime = formatTime;
 window.parseDateLike = parseDateLike;
+window.isGroupPreCompleted = isGroupPreCompleted;
+window.orderPendingFirst = orderPendingFirst;
